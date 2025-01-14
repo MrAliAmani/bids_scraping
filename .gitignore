@@ -1,0 +1,36 @@
+# Ignore data folders
+commbuys/
+nyc/
+txsmartbuy/
+oregonbuys/
+myfloridamarketplace/
+nyscr/
+
+# Ignore Excel files
+*.xlsx
+
+# Ignore Credentials
+instructions
+.docx
+.env
+.aider*
+
+# Snapshots
+.png
+
+# Prompts
+prompts/
+
+# VSCode
+.vscode
+
+# cache
+__pycache__
+utils\__pycache__
+.pyc
+
+# application cache
+cache
+
+test_images\web_scraping.mp4
+test_images\web_scraping.tscproj
