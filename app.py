@@ -55,6 +55,7 @@ logger = logging.getLogger(__name__)
 
 # Add this near other global variables at the top of the file
 running_processes = {}  # Dictionary to keep track of running processes
+auto_started_scripts = set()  # Track scripts that have been automatically started
 
 # Global variables
 yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
@@ -543,8 +544,8 @@ def run_script(script_name):
             f"{os.path.splitext(os.path.basename(script_name))[0]}_COMPLETED",
         )
 
-        # Prepare PowerShell command
-        powershell_command = f"conda activate bids; & python {script_name}"
+        # Prepare PowerShell command with output redirection
+        powershell_command = f"conda activate bids; & python {script_name} | Tee-Object -FilePath '{log_file}' -Append"
         
         # Set up environment variables for the process
         env = os.environ.copy()
@@ -567,50 +568,51 @@ def run_script(script_name):
         # Wait for process to complete
         return_code = script_process.wait()
 
-        if return_code == 0:
-            # Update script status to Success
+        # Check for COMPLETED folder or return code
+        if os.path.exists(completed_folder) or return_code == 0:
             script_infos[script_name].status = ScriptStatus.SUCCESS
             script_infos[script_name].progress = 100
+            log_to_ui(f"Script {script_name} completed successfully")
             
-            # Check if this was the last script
-            if script_name == SCRIPT_ORDER[-1]:
-                log_to_ui("All scripts completed. Starting Excel processing...")
-                process_all_excel_files()
+            # Get next script that hasn't been run yet
+            next_script = None
+            current_index = SCRIPT_ORDER.index(script_name)
+            for script in SCRIPT_ORDER[current_index + 1:]:
+                if script_infos[script].status == ScriptStatus.PENDING:
+                    next_script = script
+                    break
+            
+            if next_script:
+                log_to_ui(f"Starting next unrun script: {next_script}")
+                thread = threading.Thread(target=run_script, args=(next_script,))
+                thread.daemon = True
+                thread.start()
             else:
-                # Start the next script
-                next_script = get_next_script(script_name)
-                if next_script:
-                    log_to_ui(f"Starting next script in sequence: {next_script}")
-                    threading.Thread(target=run_script, args=(next_script,)).start()
-                else:
-                    log_to_ui("No more scripts to run in sequence.")
-
+                log_to_ui("No more unrun scripts to start")
+                # Check if all scripts are done
+                if all(script_infos[s].status in [ScriptStatus.SUCCESS, ScriptStatus.ERROR] for s in SCRIPT_ORDER):
+                    log_to_ui("All scripts have completed. Starting Excel processing...")
+                    process_all_excel_files()
         else:
             script_infos[script_name].status = ScriptStatus.ERROR
-            log_to_ui(f"Script {script_name} failed with return code {return_code}")
+            log_to_ui(f"Script {script_name} failed")
 
     except Exception as e:
         logger.error(f"Error running script {script_name}: {str(e)}")
         log_to_ui(f"Error running script {script_name}: {str(e)}")
         script_infos[script_name].status = ScriptStatus.ERROR
-        if script_process:
-            try:
-                script_process.kill()
-            except:
-                pass
 
     finally:
-        active_scripts.remove(script_name)
+        # Clean up process
+        if script_name in active_scripts:
+            active_scripts.remove(script_name)
         if script_name in running_processes:
             del running_processes[script_name]
         script_infos[script_name].end_time = datetime.now()
-
-        # Play notification sound when script completes
-        play_notification_sound()
-            
-        # Start next script to maintain concurrent scripts
-        if not terminate_flag.is_set():
-            start_next_script()
+        
+        # Kill the process if it's still running
+        if script_process and script_process.poll() is None:
+            terminate_process(script_process, script_name)
 
 def process_all_excel_files():
     """Process all Excel files after all scripts are complete"""
@@ -633,7 +635,8 @@ def process_all_excel_files():
             
         log_to_ui(f"Found {len(completed_folders)} completed folders to process")
         
-        # Process each folder
+        # First process all Excel files
+        excel_success = True
         for folder in completed_folders:
             script_name = f"scrapers/{os.path.basename(folder)[:-10]}.py"  # Remove _COMPLETED
             log_to_ui(f"Processing Excel files in {folder}")
@@ -651,6 +654,7 @@ def process_all_excel_files():
                 
                 # Process Excel files
                 success = process_excel_files(folder)
+                excel_success = excel_success and success
                 
                 # Update status
                 script_infos[script_name].excel_status = 'Done'
@@ -664,16 +668,18 @@ def process_all_excel_files():
                 
                 if not success:
                     log_to_ui(f"❌ Failed to process Excel files in {folder}")
-                    continue
         
-        # After all Excel files are processed, start upload
-        log_to_ui("Excel processing complete. Starting upload process...")
-        for folder in completed_folders:
-            upload_success, upload_message = upload_data(folder)
-            if not upload_success:
-                log_to_ui(f"❌ Upload failed for {folder}: {upload_message}")
-            else:
-                log_to_ui(f"✅ Upload completed successfully for {folder}")
+        # After ALL Excel files are processed, start upload for each folder
+        if excel_success:
+            log_to_ui("Excel processing complete. Starting upload process...")
+            for folder in completed_folders:
+                upload_success, upload_message = upload_data(folder)
+                if not upload_success:
+                    log_to_ui(f"❌ Upload failed for {folder}: {upload_message}")
+                else:
+                    log_to_ui(f"✅ Upload completed successfully for {folder}")
+        else:
+            log_to_ui("❌ Excel processing had errors. Upload process skipped.")
                 
     except Exception as e:
         logger.error(f"Error in batch Excel processing: {str(e)}")
@@ -681,34 +687,67 @@ def process_all_excel_files():
 
 def start_initial_batch():
     try:
-        # Start only up to 8 scripts
-        for _ in range(min(8, script_queue.qsize())):
-            if not terminate_flag.is_set():
-                script = script_queue.get()
-                thread = threading.Thread(target=run_script, args=(script,))
-                thread.daemon = True
-                thread.start()
-                time.sleep(1)  # Small delay between starts
+        # Start up to 8 scripts initially
+        for _ in range(8):
+            # Get next script that hasn't been started
+            remaining_scripts = [s for s in SCRIPT_ORDER if s not in auto_started_scripts]
+            if not remaining_scripts or terminate_flag.is_set():
+                break
+                
+            next_script = remaining_scripts[0]
+            thread = threading.Thread(target=run_script, args=(next_script,))
+            thread.daemon = True
+            thread.start()
+            auto_started_scripts.add(next_script)
+            log_to_ui(f"Started initial script: {next_script}")
+            time.sleep(1)  # Small delay between starts
 
         log_to_ui("Initial batch of scripts started")
     except Exception as e:
         log_to_ui(f"Error starting initial scripts: {e}")
 
-def start_next_script():
-    """Start the next script from the queue if we have less than 8 running"""
+def should_start_excel_processing():
+    """Check if we should start Excel processing"""
     try:
-        # Count currently running scripts
-        running_count = len(active_scripts)
+        # Check if all scripts have been either run or are in error state
+        all_scripts_done = all(script in auto_started_scripts for script in SCRIPT_ORDER)
+        all_scripts_finished = all(
+            script_infos[script].status in [ScriptStatus.SUCCESS, ScriptStatus.ERROR]
+            for script in SCRIPT_ORDER
+        )
+        return all_scripts_done and all_scripts_finished
+    except Exception as e:
+        logger.error(f"Error checking if should start Excel processing: {str(e)}")
+        return False
 
-        # Start as many scripts as needed to reach 8 concurrent scripts
-        while running_count < 8 and not script_queue.empty() and not terminate_flag.is_set():
-            next_script = script_queue.get()
-            thread = threading.Thread(target=run_script, args=(next_script,))
-            thread.daemon = True
-            thread.start()
-            log_to_ui(f"Started next script: {next_script}")
-            running_count += 1  # Update running count
-            time.sleep(0.5)  # Small delay between starts
+def start_next_script():
+    """Start the next script that hasn't been run yet"""
+    try:
+        # Get remaining scripts that haven't been auto-started
+        remaining_scripts = [s for s in SCRIPT_ORDER if s not in auto_started_scripts]
+        
+        if not remaining_scripts:
+            log_to_ui("No more scripts to run - all scripts have been started once")
+            if should_start_excel_processing():
+                log_to_ui("All scripts have been processed. Starting Excel processing...")
+                process_all_excel_files()
+            return
+
+        # Get the next script
+        next_script = remaining_scripts[0]
+        
+        # Skip if script is already running
+        if next_script in active_scripts:
+            log_to_ui(f"Script {next_script} is already running")
+            return
+            
+        # Start the script
+        thread = threading.Thread(target=run_script, args=(next_script,))
+        thread.daemon = True
+        thread.start()
+        auto_started_scripts.add(next_script)  # Mark as auto-started
+        log_to_ui(f"Started next script: {next_script}")
+            
     except Exception as e:
         log_to_ui(f"Error starting next script: {str(e)}")
 
@@ -717,15 +756,8 @@ def terminate_process(process, script_name=None):
     try:
         if process and process.poll() is None:  # If process is still running
             log_to_ui(f"Terminating process {process.pid}")
-
-            # Kill entire process tree
             kill_process_tree(process.pid)
-
-            # Double check if main process is dead
-            if process.poll() is None:
-                process.kill()  # Last resort
-
-            process.wait(timeout=5)  # Wait for process to finish
+            process.wait(timeout=5)
             
             # Remove from active scripts and running processes first
             if script_name:
@@ -736,24 +768,63 @@ def terminate_process(process, script_name=None):
                 
                 # Start next script if not stopping all scripts
                 if not terminate_flag.is_set():
-                    log_to_ui(f"Starting next script after stopping {script_name}")
-                    start_next_script()
+                    current_index = SCRIPT_ORDER.index(script_name)
+                    for next_script in SCRIPT_ORDER[current_index + 1:]:
+                        if script_infos[next_script].status == ScriptStatus.PENDING:
+                            log_to_ui(f"Starting next unrun script: {next_script}")
+                            thread = threading.Thread(target=run_script, args=(next_script,))
+                            thread.daemon = True
+                            thread.start()
+                            break  # Exit after starting one script
 
     except Exception as e:
         log_to_ui(f"Error terminating process: {str(e)}")
-        # Force kill if all else fails
-        try:
-            process.kill()
-        except:
-            pass
-        
         # Still try to start next script even if there was an error
         if script_name and not terminate_flag.is_set():
             if script_name in active_scripts:
                 active_scripts.remove(script_name)
             if script_name in running_processes:
                 del running_processes[script_name]
-            start_next_script()
+            try:
+                current_index = SCRIPT_ORDER.index(script_name)
+                for next_script in SCRIPT_ORDER[current_index + 1:]:
+                    if script_infos[next_script].status == ScriptStatus.PENDING:
+                        log_to_ui(f"Starting next unrun script: {next_script}")
+                        thread = threading.Thread(target=run_script, args=(next_script,))
+                        thread.daemon = True
+                        thread.start()
+                        break  # Exit after starting one script
+            except Exception as e2:
+                log_to_ui(f"Error starting next script: {str(e2)}")
+
+def terminate_scripts():
+    """Stop all scripts and exit the application"""
+    try:
+        log_to_ui("Stopping all scripts...")
+
+        # Set terminate flag to prevent new scripts
+        terminate_flag.set()
+
+        # Stop all running processes
+        for script_name, process in list(running_processes.items()):
+            log_to_ui(f"Stopping script: {script_name}")
+            terminate_process(process, script_name)
+            if script_name in running_processes:
+                del running_processes[script_name]
+            if script_name in active_scripts:
+                active_scripts.remove(script_name)
+
+        # Check if we should start Excel processing
+        if should_start_excel_processing():
+            log_to_ui("All scripts have been processed. Starting Excel processing...")
+            process_all_excel_files()
+
+        log_to_ui("All scripts stopped")
+        play_notification_sound()  # Play sound when all scripts are stopped
+
+    except Exception as e:
+        log_to_ui(f"Error stopping scripts: {str(e)}")
+        play_notification_sound()  # Play sound for error in stopping scripts
 
 
 def kill_process_tree(pid):
@@ -792,35 +863,6 @@ def kill_process_tree(pid):
         log_to_ui(f"Error killing process tree: {e}")
 
 
-def terminate_scripts():
-    """Stop all scripts and exit the application"""
-    try:
-        log_to_ui("Stopping all scripts...")
-
-        # Set terminate flag to prevent new scripts
-        terminate_flag.set()
-
-        # Stop all running processes
-        for script_name, process in list(running_processes.items()):
-            log_to_ui(f"Stopping script: {script_name}")
-            terminate_process(process, script_name)
-            if script_name in running_processes:
-                del running_processes[script_name]
-            if script_name in active_scripts:
-                active_scripts.remove(script_name)
-
-        # Clear the script queue
-        with script_queue.mutex:
-            script_queue.queue.clear()
-
-        log_to_ui("All scripts stopped")
-        play_notification_sound()  # Play sound when all scripts are stopped
-
-    except Exception as e:
-        log_to_ui(f"Error stopping scripts: {str(e)}")
-        play_notification_sound()  # Play sound for error in stopping scripts
-
-
 def setup_keyboard_handler():
     def on_ctrl_q(e):
         if e.name == "q" and keyboard.is_pressed("ctrl"):
@@ -846,14 +888,20 @@ def create_app():
     # Start initial batch of scripts
     def start_initial_batch():
         try:
-            # Start only up to 8 scripts
-            for _ in range(min(8, script_queue.qsize())):
-                if not terminate_flag.is_set():
-                    script = script_queue.get()
-                    thread = threading.Thread(target=run_script, args=(script,))
-                    thread.daemon = True
-                    thread.start()
-                    time.sleep(1)  # Small delay between starts
+            # Start up to 8 scripts initially
+            for _ in range(8):
+                # Get next script that hasn't been started
+                remaining_scripts = [s for s in SCRIPT_ORDER if s not in auto_started_scripts]
+                if not remaining_scripts or terminate_flag.is_set():
+                    break
+                    
+                next_script = remaining_scripts[0]
+                thread = threading.Thread(target=run_script, args=(next_script,))
+                thread.daemon = True
+                thread.start()
+                auto_started_scripts.add(next_script)
+                log_to_ui(f"Started initial script: {next_script}")
+                time.sleep(1)  # Small delay between starts
 
             log_to_ui("Initial batch of scripts started")
         except Exception as e:
@@ -1165,14 +1213,6 @@ def create_app():
     def get_script_logs(script_name):
         """Get logs for a specific script"""
         try:
-            # Check if script is in our script_infos and has never been started
-            script_info = script_infos.get(script_name)
-            if script_info and script_info.status == ScriptStatus.PENDING:
-                return jsonify({
-                    "status": "pending",
-                    "message": "Script hasn't started yet. Logs will be available once the script begins running."
-                }), 404
-
             # Get yesterday's date folder
             yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
             log_folder = os.path.join(os.getcwd(), yesterday)
@@ -1183,7 +1223,6 @@ def create_app():
                 script_base = script_base[:-3]
             
             log_file = os.path.join(log_folder, f"{script_base}.log")
-            logger.info(f"Looking for log file at: {log_file}")
             
             if not os.path.exists(log_file):
                 return jsonify({
@@ -1191,56 +1230,26 @@ def create_app():
                     "message": "No logs available yet. Logs will appear here once the script starts running."
                 }), 404
             
-            try:
-                # Try different encodings
-                encodings = ['utf-8', 'utf-8-sig', 'cp1252', 'latin1']
-                content = None
-                
-                for encoding in encodings:
-                    try:
-                        with open(log_file, 'r', encoding=encoding) as f:
-                            content = f.read()
-                            # Filter out PowerShell setup messages
-                            lines = content.splitlines()
-                            filtered_lines = []
-                            for line in lines:
-                                # Skip PowerShell setup messages
-                                if any(msg in line for msg in [
-                                    "CALL : The term",
-                                    "Current environment:",
-                                    "CategoryInfo",
-                                    "FullyQualifiedErrorId",
-                                    "DevTools listening on",
-                                    "+ ...",
-                                    "At line:1"
-                                ]):
-                                    continue
-                                filtered_lines.append(line)
-                            
-                            content = '\n'.join(filtered_lines)
-                            logger.info(f"Successfully read log file using {encoding} encoding")
-                            break
-                    except UnicodeDecodeError:
-                        continue
-                
-                if content is None:
-                    return jsonify({
-                        "status": "error",
-                        "message": "Could not read log file with any supported encoding"
-                    }), 500
-                
-                return jsonify({
-                    "status": "success",
-                    "content": content,
-                    "format": "powershell"  # Indicate this is PowerShell formatted output
-                })
-                
-            except Exception as e:
-                logger.error(f"Error reading log file: {str(e)}")
-                return jsonify({
-                    "status": "error",
-                    "message": f"Error reading log file: {str(e)}"
-                }), 500
+            # Read as binary first
+            with open(log_file, 'rb') as f:
+                content = f.read()
+            
+            # Remove BOM if present
+            if content.startswith(b'\xff\xfe'):  # UTF-16 BOM
+                content = content[2:].decode('utf-16')
+            elif content.startswith(b'\xef\xbb\xbf'):  # UTF-8 BOM
+                content = content[3:].decode('utf-8')
+            else:
+                content = content.decode('utf-8', errors='ignore')
+            
+            # Clean up any remaining invalid characters at start
+            content = content.lstrip('\ufeff\ufffe')
+            
+            return jsonify({
+                "status": "success",
+                "content": content,
+                "format": "powershell"
+            })
             
         except Exception as e:
             logger.error(f"Error accessing logs: {str(e)}")
