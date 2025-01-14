@@ -728,9 +728,10 @@ def start_next_script():
         
         if not remaining_scripts:
             log_to_ui("No more scripts to run - all scripts have been started once")
-            if should_start_excel_processing():
-                log_to_ui("All scripts have been processed. Starting Excel processing...")
-                process_all_excel_files()
+            # Check if all scripts have finished (success or error)
+            if all(script_infos[s].status in [ScriptStatus.SUCCESS, ScriptStatus.ERROR] for s in SCRIPT_ORDER):
+                log_to_ui("All scripts have completed. Starting Excel processing and category matching...")
+                process_all_excel_files()  # This will handle Excel processing, category matching, and then upload
             return
 
         # Get the next script
@@ -759,43 +760,47 @@ def terminate_process(process, script_name=None):
             kill_process_tree(process.pid)
             process.wait(timeout=5)
             
-            # Remove from active scripts and running processes first
             if script_name:
+                # Clean up process tracking
                 if script_name in active_scripts:
                     active_scripts.remove(script_name)
                 if script_name in running_processes:
                     del running_processes[script_name]
                 
-                # Start next script if not stopping all scripts
+                # Mark as error and track as run
+                script_infos[script_name].status = ScriptStatus.ERROR
+                auto_started_scripts.add(script_name)
+                
+                # Start next unrun script if not stopping all
                 if not terminate_flag.is_set():
-                    current_index = SCRIPT_ORDER.index(script_name)
-                    for next_script in SCRIPT_ORDER[current_index + 1:]:
-                        if script_infos[next_script].status == ScriptStatus.PENDING:
-                            log_to_ui(f"Starting next unrun script: {next_script}")
-                            thread = threading.Thread(target=run_script, args=(next_script,))
-                            thread.daemon = True
-                            thread.start()
-                            break  # Exit after starting one script
-
-    except Exception as e:
-        log_to_ui(f"Error terminating process: {str(e)}")
-        # Still try to start next script even if there was an error
-        if script_name and not terminate_flag.is_set():
-            if script_name in active_scripts:
-                active_scripts.remove(script_name)
-            if script_name in running_processes:
-                del running_processes[script_name]
-            try:
-                current_index = SCRIPT_ORDER.index(script_name)
-                for next_script in SCRIPT_ORDER[current_index + 1:]:
-                    if script_infos[next_script].status == ScriptStatus.PENDING:
+                    # Get remaining scripts that haven't been run
+                    remaining_scripts = [s for s in SCRIPT_ORDER if s not in auto_started_scripts]
+                    
+                    if not remaining_scripts:
+                        log_to_ui("No more unrun scripts. Starting Excel processing...")
+                        process_all_excel_files()
+                    else:
+                        next_script = remaining_scripts[0]
                         log_to_ui(f"Starting next unrun script: {next_script}")
                         thread = threading.Thread(target=run_script, args=(next_script,))
                         thread.daemon = True
                         thread.start()
-                        break  # Exit after starting one script
-            except Exception as e2:
-                log_to_ui(f"Error starting next script: {str(e2)}")
+                        auto_started_scripts.add(next_script)
+
+    except Exception as e:
+        log_to_ui(f"Error terminating process: {str(e)}")
+        if script_name:
+            # Clean up even if error occurs
+            if script_name in active_scripts:
+                active_scripts.remove(script_name)
+            if script_name in running_processes:
+                del running_processes[script_name]
+            # Mark as error and track as run
+            script_infos[script_name].status = ScriptStatus.ERROR
+            auto_started_scripts.add(script_name)
+            # Try to start next script
+            if not terminate_flag.is_set():
+                start_next_script()
 
 def terminate_scripts():
     """Stop all scripts and exit the application"""
@@ -1096,13 +1101,14 @@ def create_app():
                 script_info = script_infos.get(script_name)
                 if script_info and script_info.process:
                     log_to_ui(f"Stopping script: {script_name}")
-                    terminate_process(script_info.process)
+                    terminate_process(script_info.process, script_name)  # Pass script_name
                     script_info.status = ScriptStatus.ERROR
                     script_info.end_time = datetime.now()
                     return jsonify({"status": "success", "message": f"Script {script_name} stopped"})
                 return jsonify({"status": "error", "message": "Script not running"}), 404
             else:
                 # Stop all scripts
+                terminate_flag.set()  # Set terminate flag before stopping all
                 terminate_scripts()
                 return jsonify({"status": "success", "message": "All scripts stopped"})
                 
