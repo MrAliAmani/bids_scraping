@@ -539,9 +539,10 @@ def run_script(script_name):
         script_infos[script_name].log_file = log_file
 
         # Create completed folder path
+        script_base = os.path.splitext(os.path.basename(script_name))[0]
         completed_folder = os.path.join(
-            os.path.dirname(script_name),
-            f"{os.path.splitext(os.path.basename(script_name))[0]}_COMPLETED",
+            yesterday,
+            f"{script_base}_COMPLETED"
         )
 
         # Prepare PowerShell command with output redirection
@@ -565,37 +566,39 @@ def run_script(script_name):
         script_infos[script_name].process = script_process
         running_processes[script_name] = script_process
 
-        # Wait for process to complete
-        return_code = script_process.wait()
+        # Monitor for COMPLETED folder creation
+        while script_process.poll() is None:
+            if os.path.exists(completed_folder):
+                log_to_ui(f"COMPLETED folder detected for {script_name}")
+                # Terminate the process since COMPLETED folder exists
+                terminate_process(script_process, script_name)
+                script_infos[script_name].status = ScriptStatus.SUCCESS
+                script_infos[script_name].progress = 100
+                log_to_ui(f"Script {script_name} completed successfully (COMPLETED folder found)")
+                
+                # Get next script that hasn't been run yet
+                next_script = None
+                current_index = SCRIPT_ORDER.index(script_name)
+                for script in SCRIPT_ORDER[current_index + 1:]:
+                    if script_infos[script].status == ScriptStatus.PENDING:
+                        next_script = script
+                        break
+                
+                if next_script:
+                    log_to_ui(f"Starting next unrun script: {next_script}")
+                    thread = threading.Thread(target=run_script, args=(next_script,))
+                    thread.daemon = True
+                    thread.start()
+                else:
+                    log_to_ui("No more unrun scripts to start")
+                return
+            time.sleep(1)  # Check every second
 
-        # Check for COMPLETED folder or return code
-        if os.path.exists(completed_folder) or return_code == 0:
+        # Process completed normally
+        if script_process.returncode == 0:
             script_infos[script_name].status = ScriptStatus.SUCCESS
             script_infos[script_name].progress = 100
             log_to_ui(f"Script {script_name} completed successfully")
-            
-            # Get next script that hasn't been run yet
-            next_script = None
-            current_index = SCRIPT_ORDER.index(script_name)
-            for script in SCRIPT_ORDER[current_index + 1:]:
-                if script_infos[script].status == ScriptStatus.PENDING:
-                    next_script = script
-                    break
-            
-            if next_script:
-                log_to_ui(f"Starting next unrun script: {next_script}")
-                thread = threading.Thread(target=run_script, args=(next_script,))
-                thread.daemon = True
-                thread.start()
-            else:
-                log_to_ui("No more unrun scripts to start")
-                # Check if all scripts are done
-                if all(script_infos[s].status in [ScriptStatus.SUCCESS, ScriptStatus.ERROR] for s in SCRIPT_ORDER):
-                    log_to_ui("All scripts have completed. Starting Excel processing...")
-                    process_all_excel_files()
-        else:
-            script_infos[script_name].status = ScriptStatus.ERROR
-            log_to_ui(f"Script {script_name} failed")
 
     except Exception as e:
         logger.error(f"Error running script {script_name}: {str(e)}")
