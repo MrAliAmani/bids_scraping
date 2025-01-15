@@ -493,7 +493,19 @@ def process_excel_files(completed_folder_path: str) -> bool:
                 log_to_ui(f"❌ Error processing file {file_name}: {str(e)}")
                 success = False
 
-        return success
+        # After all Excel files are processed
+        log_to_ui("✅ Excel processing completed")
+        
+        # Start upload process
+        log_to_ui("🔄 Starting upload process...")
+        upload_success, upload_message = upload_data(completed_folder_path)
+        
+        if not upload_success:
+            log_to_ui(f"❌ Upload failed: {upload_message}")
+            return False
+            
+        log_to_ui("✅ Upload completed successfully")
+        return True
 
     except Exception as e:
         logger.error(f"Error in Excel processing: {str(e)}")
@@ -521,7 +533,7 @@ def match_category(title: str, description: str, category: str, api_categories: 
         return None, 0.0
 
 def run_script(script_name):
-    """Run a script and manage its lifecycle"""
+    """Run a single scraper script with enhanced logging and progress tracking"""
     try:
         if script_name in active_scripts:
             log_to_ui(f"Script {script_name} is already running")
@@ -606,16 +618,22 @@ def run_script(script_name):
         script_infos[script_name].status = ScriptStatus.ERROR
 
     finally:
-        # Clean up process
-        if script_name in active_scripts:
-            active_scripts.remove(script_name)
+        active_scripts.remove(script_name)
         if script_name in running_processes:
             del running_processes[script_name]
         script_infos[script_name].end_time = datetime.now()
+
+        # Play notification sound when script completes
+        play_notification_sound()
         
-        # Kill the process if it's still running
-        if script_process and script_process.poll() is None:
-            terminate_process(script_process, script_name)
+        # Check if this was the last script to complete
+        if len(active_scripts) == 0 and all_scripts_completed():
+            log_to_ui("All scripts have completed. Starting Excel processing...")
+            check_and_start_excel_processing()
+        
+        # Start next script to maintain concurrent execution
+        if not terminate_flag.is_set():
+            start_next_script()
 
 def process_all_excel_files():
     """Process all Excel files after all scripts are complete"""
@@ -1398,6 +1416,103 @@ def update_log_file_status(script_name: str, status: str) -> None:
                 script_infos[script_name].log_file = new_path
     except Exception as e:
         logger.error(f"Error updating log file status: {str(e)}")
+
+# Add this function near the top with other helper functions
+def all_scripts_completed() -> bool:
+    """Check if all scripts have completed (either success or error)"""
+    return all(info.status in [ScriptStatus.SUCCESS, ScriptStatus.ERROR] 
+              for info in script_infos.values())
+
+def check_and_start_excel_processing():
+    """Check if all scripts are done and start Excel processing if needed"""
+    if all_scripts_completed():
+        log_to_ui("🔄 All scripts completed. Starting Excel processing...")
+        
+        # Get yesterday's folder
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        yesterday_folder = os.path.join(os.getcwd(), yesterday)
+        
+        # Track if any Excel processing was started
+        processing_started = False
+        
+        # Process completed folders for each script
+        for script_name, info in script_infos.items():
+            if info.status == ScriptStatus.SUCCESS:  # Only process successful scripts
+                script_base = os.path.splitext(os.path.basename(script_name))[0]
+                completed_folder = os.path.join(yesterday_folder, f"{script_base}_COMPLETED")
+                
+                if os.path.exists(completed_folder):
+                    processing_started = True
+                    
+                    def process_excel_thread(script_name=script_name, folder=completed_folder):
+                        try:
+                            # Update Excel status at start
+                            script_infos[script_name].excel_status = 'Running'
+                            script_infos[script_name].excel_progress = 0
+                            socketio.emit('script_update', {
+                                'script': script_name,
+                                'status': script_infos[script_name].status.value,
+                                'excel_status': 'Running',
+                                'excel_progress': 0,
+                                'message': 'Starting Excel processing'
+                            }, namespace='/')
+                            
+                            # Process Excel files
+                            success = process_excel_files(folder)
+                            
+                            # Update final status
+                            final_status = 'Done' if success else 'Error'
+                            script_infos[script_name].excel_status = final_status
+                            script_infos[script_name].excel_progress = 100
+                            socketio.emit('script_update', {
+                                'script': script_name,
+                                'status': script_infos[script_name].status.value,
+                                'excel_status': final_status,
+                                'excel_progress': 100,
+                                'message': 'Excel processing complete' if success else 'Excel processing failed'
+                            }, namespace='/')
+                            
+                        except Exception as e:
+                            logger.error(f"Error processing Excel files for {script_name}: {str(e)}")
+                            script_infos[script_name].excel_status = 'Error'
+                            script_infos[script_name].excel_progress = 100
+                            socketio.emit('script_update', {
+                                'script': script_name,
+                                'status': script_infos[script_name].status.value,
+                                'excel_status': 'Error',
+                                'excel_progress': 100,
+                                'message': f'Error: {str(e)}'
+                            }, namespace='/')
+                    
+                    # Start Excel processing thread
+                    excel_thread = threading.Thread(target=process_excel_thread)
+                    excel_thread.daemon = True
+                    excel_thread.start()
+                else:
+                    # Update status for scripts with no completed folder
+                    script_infos[script_name].excel_status = 'Done'
+                    script_infos[script_name].excel_progress = 100
+                    socketio.emit('script_update', {
+                        'script': script_name,
+                        'status': script_infos[script_name].status.value,
+                        'excel_status': 'Done',
+                        'excel_progress': 100,
+                        'message': 'No Excel files to process'
+                    }, namespace='/')
+            else:
+                # Update status for failed scripts
+                script_infos[script_name].excel_status = 'Done'
+                script_infos[script_name].excel_progress = 100
+                socketio.emit('script_update', {
+                    'script': script_name,
+                    'status': script_infos[script_name].status.value,
+                    'excel_status': 'Done',
+                    'excel_progress': 100,
+                    'message': 'Script failed - no Excel processing needed'
+                }, namespace='/')
+        
+        if not processing_started:
+            log_to_ui("No completed folders found for Excel processing")
 
 if __name__ == "__main__":
     try:
