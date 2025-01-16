@@ -399,30 +399,26 @@ def process_excel_files(completed_folder_path: str) -> bool:
                 total_rows = len(df)
                 log_to_ui(f"📊 Total rows to process: {total_rows}")
 
-                # Initialize API columns if they don't exist
-                api_columns = {
-                    'API_Category': None,
-                    'API_Category_ID': None,
-                    'API_Notice_Type': None,
-                    'API_Agency': None,
-                    'API_State': None
-                }
-                
-                for col in api_columns:
-                    if col not in df.columns:
-                        # Find appropriate position to insert column
-                        if col.startswith('API_Category'):
-                            pos = df.columns.get_loc('Category') + 1 if 'Category' in df.columns else len(df.columns)
-                        elif col == 'API_Notice_Type':
-                            pos = df.columns.get_loc('Notice Type') + 1 if 'Notice Type' in df.columns else len(df.columns)
-                        elif col == 'API_Agency':
-                            pos = df.columns.get_loc('Agency') + 1 if 'Agency' in df.columns else len(df.columns)
-                        elif col == 'API_State':
-                            pos = df.columns.get_loc('State') + 1 if 'State' in df.columns else len(df.columns)
-                        else:
-                            pos = len(df.columns)
-                        df.insert(pos, col, None)
-                        log_to_ui(f"Added column: {col}")
+                # Get column positions for inserting API columns
+                category_pos = df.columns.get_loc('Category') + 1 if 'Category' in df.columns else len(df.columns)
+                notice_pos = df.columns.get_loc('Notice Type') + 1 if 'Notice Type' in df.columns else len(df.columns)
+                agency_pos = df.columns.get_loc('Agency') + 1 if 'Agency' in df.columns else len(df.columns)
+                state_pos = df.columns.get_loc('State') + 1 if 'State' in df.columns else len(df.columns)
+
+                # Add API columns in correct positions
+                if 'API_Category' not in df.columns:
+                    df.insert(category_pos, 'API_Category', None)
+                    df.insert(category_pos + 1, 'API_Category_ID', None)
+                    log_to_ui("Added API Category columns")
+                if 'API_Notice_Type' not in df.columns:
+                    df.insert(notice_pos, 'API_Notice_Type', None)
+                    log_to_ui("Added API Notice Type column")
+                if 'API_Agency' not in df.columns:
+                    df.insert(agency_pos, 'API_Agency', None)
+                    log_to_ui("Added API Agency column")
+                if 'API_State' not in df.columns:
+                    df.insert(state_pos, 'API_State', None)
+                    log_to_ui("Added API State column")
 
                 # Process each row
                 for index, row in df.iterrows():
@@ -494,18 +490,14 @@ def process_excel_files(completed_folder_path: str) -> bool:
                 success = False
 
         # After all Excel files are processed
-        log_to_ui("✅ Excel processing completed")
-        
-        # Start upload process
-        log_to_ui("🔄 Starting upload process...")
-        upload_success, upload_message = upload_data(completed_folder_path)
-        
-        if not upload_success:
-            log_to_ui(f"❌ Upload failed: {upload_message}")
-            return False
+        if success:
+            log_to_ui("✅ Excel processing completed successfully!")
+            log_to_ui("👉 You can now review the Excel files and click 'Upload Data' when ready to upload.")
+        else:
+            log_to_ui("⚠️ Excel processing completed with some errors. Please review the logs above.")
+            log_to_ui("👉 Fix any issues before proceeding with the upload.")
             
-        log_to_ui("✅ Upload completed successfully")
-        return True
+        return success
 
     except Exception as e:
         logger.error(f"Error in Excel processing: {str(e)}")
@@ -640,15 +632,26 @@ def process_all_excel_files():
     try:
         log_to_ui("Starting batch Excel processing...")
         
-        # Get all completed folders
+        # Get yesterday's date folder
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        yesterday_folder = os.path.join(os.getcwd(), yesterday)
+        
+        if not os.path.exists(yesterday_folder):
+            log_to_ui(f"Yesterday's folder not found: {yesterday_folder}")
+            return
+            
+        # List all items in yesterday's folder
+        all_items = os.listdir(yesterday_folder)
+        log_to_ui(f"Found items in yesterday's folder: {all_items}")
+        
+        # Find all COMPLETED folders
         completed_folders = []
-        for script in SCRIPT_ORDER:
-            completed_folder = os.path.join(
-                os.path.dirname(script),
-                f"{os.path.splitext(os.path.basename(script))[0]}_COMPLETED",
-            )
-            if os.path.exists(completed_folder):
-                completed_folders.append(completed_folder)
+        for item in all_items:
+            if '_COMPLETED' in item:  # Changed to check for _COMPLETED anywhere in name
+                completed_folder = os.path.join(yesterday_folder, item)
+                if os.path.isdir(completed_folder):
+                    completed_folders.append(completed_folder)
+                    log_to_ui(f"Found completed folder: {item}")
         
         if not completed_folders:
             log_to_ui("No completed folders found for Excel processing")
@@ -656,10 +659,11 @@ def process_all_excel_files():
             
         log_to_ui(f"Found {len(completed_folders)} completed folders to process")
         
-        # First process all Excel files
+        # Process each folder
         excel_success = True
         for folder in completed_folders:
-            script_name = f"scrapers/{os.path.basename(folder)[:-10]}.py"  # Remove _COMPLETED
+            script_base = os.path.basename(folder)[:-10]  # Remove _COMPLETED suffix
+            script_name = f"scrapers/{script_base}.py"
             log_to_ui(f"Processing Excel files in {folder}")
             
             # Update script info
@@ -689,18 +693,8 @@ def process_all_excel_files():
                 
                 if not success:
                     log_to_ui(f"❌ Failed to process Excel files in {folder}")
-        
-        # After ALL Excel files are processed, start upload for each folder
-        if excel_success:
-            log_to_ui("Excel processing complete. Starting upload process...")
-            for folder in completed_folders:
-                upload_success, upload_message = upload_data(folder)
-                if not upload_success:
-                    log_to_ui(f"❌ Upload failed for {folder}: {upload_message}")
-                else:
-                    log_to_ui(f"✅ Upload completed successfully for {folder}")
-        else:
-            log_to_ui("❌ Excel processing had errors. Upload process skipped.")
+                    
+        log_to_ui("✅ Excel processing completed")
                 
     except Exception as e:
         logger.error(f"Error in batch Excel processing: {str(e)}")
@@ -798,9 +792,10 @@ def terminate_process(process, script_name=None):
                     remaining_scripts = [s for s in SCRIPT_ORDER if s not in auto_started_scripts]
                     
                     if not remaining_scripts:
-                        log_to_ui("No more unrun scripts. Starting Excel processing...")
-                        process_all_excel_files()
-                    else:
+                        log_to_ui("No more unrun scripts.")
+                        log_to_ui("👉 Click 'Process Excel' button to start processing Excel files.")
+                        check_and_start_excel_processing()
+                    elif len(active_scripts) < 1:  # Only start if we have less than 1 active script
                         next_script = remaining_scripts[0]
                         log_to_ui(f"Starting next unrun script: {next_script}")
                         thread = threading.Thread(target=run_script, args=(next_script,))
@@ -819,9 +814,6 @@ def terminate_process(process, script_name=None):
             # Mark as error and track as run
             script_infos[script_name].status = ScriptStatus.ERROR
             auto_started_scripts.add(script_name)
-            # Try to start next script
-            if not terminate_flag.is_set():
-                start_next_script()
 
 def terminate_scripts():
     """Stop all scripts and exit the application"""
@@ -1285,6 +1277,72 @@ def create_app():
                 "message": f"Error accessing logs: {str(e)}"
             }), 500
 
+    @app.route("/api/process_excel", methods=['POST'])
+    def process_excel():
+        """Start Excel processing manually"""
+        try:
+            # Start Excel processing in a new thread
+            threading.Thread(target=process_all_excel_files).start()
+            return jsonify({"status": "success", "message": "Excel processing started"}), 200
+        except Exception as e:
+            return jsonify({"status": "error", "message": str(e)}), 500
+
+    @app.route("/api/upload_data", methods=['POST'])
+    def upload_data_api():
+        """Start data upload manually"""
+        try:
+            # Get yesterday's date folder
+            yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+            yesterday_folder = os.path.join(os.getcwd(), yesterday)
+            
+            log_to_ui(f"Looking for completed folders in: {yesterday_folder}")
+            
+            if not os.path.exists(yesterday_folder):
+                return jsonify({
+                    "status": "error", 
+                    "message": f"Yesterday's folder not found: {yesterday}"
+                }), 400
+
+            # List all items in yesterday's folder
+            all_items = os.listdir(yesterday_folder)
+            log_to_ui(f"Found items in yesterday's folder: {all_items}")
+
+            # Find all COMPLETED folders
+            completed_folders = []
+            for item in all_items:
+                if '_COMPLETED' in item:  # Changed to check for _COMPLETED anywhere in name
+                    completed_folder = os.path.join(yesterday_folder, item)
+                    if os.path.isdir(completed_folder):
+                        completed_folders.append(completed_folder)
+                        log_to_ui(f"Found completed folder: {item}")
+
+            if not completed_folders:
+                return jsonify({
+                    "status": "error", 
+                    "message": f"No COMPLETED folders found in {yesterday_folder}"
+                }), 400
+
+            log_to_ui(f"Found {len(completed_folders)} completed folders to upload")
+
+            # Start upload process in a new thread
+            def process_upload(folders):
+                for folder in folders:
+                    log_to_ui(f"Starting upload for: {folder}")
+                    upload_success, upload_message = upload_data(folder)
+                    if not upload_success:
+                        log_to_ui(f"❌ Upload failed for {folder}: {upload_message}")
+                    else:
+                        log_to_ui(f"✅ Upload completed successfully for {folder}")
+
+            threading.Thread(target=process_upload, args=(completed_folders,)).start()
+            return jsonify({
+                "status": "success", 
+                "message": f"Data upload started for {len(completed_folders)} folders"
+            }), 200
+        except Exception as e:
+            logger.error(f"Error in upload_data_api: {str(e)}")
+            return jsonify({"status": "error", "message": str(e)}), 500
+
     return app
 
 def remove_empty_folders(folder_path: str) -> bool:
@@ -1424,95 +1482,11 @@ def all_scripts_completed() -> bool:
               for info in script_infos.values())
 
 def check_and_start_excel_processing():
-    """Check if all scripts are done and start Excel processing if needed"""
+    """Check if all scripts are done and notify user"""
     if all_scripts_completed():
-        log_to_ui("🔄 All scripts completed. Starting Excel processing...")
-        
-        # Get yesterday's folder
-        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-        yesterday_folder = os.path.join(os.getcwd(), yesterday)
-        
-        # Track if any Excel processing was started
-        processing_started = False
-        
-        # Process completed folders for each script
-        for script_name, info in script_infos.items():
-            if info.status == ScriptStatus.SUCCESS:  # Only process successful scripts
-                script_base = os.path.splitext(os.path.basename(script_name))[0]
-                completed_folder = os.path.join(yesterday_folder, f"{script_base}_COMPLETED")
-                
-                if os.path.exists(completed_folder):
-                    processing_started = True
-                    
-                    def process_excel_thread(script_name=script_name, folder=completed_folder):
-                        try:
-                            # Update Excel status at start
-                            script_infos[script_name].excel_status = 'Running'
-                            script_infos[script_name].excel_progress = 0
-                            socketio.emit('script_update', {
-                                'script': script_name,
-                                'status': script_infos[script_name].status.value,
-                                'excel_status': 'Running',
-                                'excel_progress': 0,
-                                'message': 'Starting Excel processing'
-                            }, namespace='/')
-                            
-                            # Process Excel files
-                            success = process_excel_files(folder)
-                            
-                            # Update final status
-                            final_status = 'Done' if success else 'Error'
-                            script_infos[script_name].excel_status = final_status
-                            script_infos[script_name].excel_progress = 100
-                            socketio.emit('script_update', {
-                                'script': script_name,
-                                'status': script_infos[script_name].status.value,
-                                'excel_status': final_status,
-                                'excel_progress': 100,
-                                'message': 'Excel processing complete' if success else 'Excel processing failed'
-                            }, namespace='/')
-                            
-                        except Exception as e:
-                            logger.error(f"Error processing Excel files for {script_name}: {str(e)}")
-                            script_infos[script_name].excel_status = 'Error'
-                            script_infos[script_name].excel_progress = 100
-                            socketio.emit('script_update', {
-                                'script': script_name,
-                                'status': script_infos[script_name].status.value,
-                                'excel_status': 'Error',
-                                'excel_progress': 100,
-                                'message': f'Error: {str(e)}'
-                            }, namespace='/')
-                    
-                    # Start Excel processing thread
-                    excel_thread = threading.Thread(target=process_excel_thread)
-                    excel_thread.daemon = True
-                    excel_thread.start()
-                else:
-                    # Update status for scripts with no completed folder
-                    script_infos[script_name].excel_status = 'Done'
-                    script_infos[script_name].excel_progress = 100
-                    socketio.emit('script_update', {
-                        'script': script_name,
-                        'status': script_infos[script_name].status.value,
-                        'excel_status': 'Done',
-                        'excel_progress': 100,
-                        'message': 'No Excel files to process'
-                    }, namespace='/')
-            else:
-                # Update status for failed scripts
-                script_infos[script_name].excel_status = 'Done'
-                script_infos[script_name].excel_progress = 100
-                socketio.emit('script_update', {
-                    'script': script_name,
-                    'status': script_infos[script_name].status.value,
-                    'excel_status': 'Done',
-                    'excel_progress': 100,
-                    'message': 'Script failed - no Excel processing needed'
-                }, namespace='/')
-        
-        if not processing_started:
-            log_to_ui("No completed folders found for Excel processing")
+        log_to_ui("🔄 All scripts have completed.")
+        log_to_ui("👉 Click 'Process Excel' button to start processing Excel files.")
+        log_to_ui("⚠️ Make sure to review the scraped data before processing.")
 
 if __name__ == "__main__":
     try:

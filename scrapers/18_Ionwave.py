@@ -131,13 +131,13 @@ logger = setup_logger()
 
 def print_start_message():
 	"""Display start message"""
-	print("🟢 Bids Extraction Started")
-	logger.info("[START] 🟢 Bids Extraction Started")
+	print("Bids Extraction Started")
+	logger.info("[START] Bids Extraction Started")
 
 def notify_completion():
 	"""Notify successful completion"""
-	print("\n✅ All Bids and Attachments Extraction Successfully Completed")
-	logger.info("[COMPLETE] ✅ All Bids and Attachments Extraction Successfully Completed")
+	print("\nAll Bids and Attachments Extraction Successfully Completed")
+	logger.info("[COMPLETE] All Bids and Attachments Extraction Successfully Completed")
 	play_notification_sound()
 
 def handle_error(error_msg, play_sound=True, pause=True):
@@ -921,14 +921,14 @@ def download_attachments(driver, bid_folder):
 			)
 			print("✓ Confirmed on bid detail page")
 		except:
-			print("❌ Not on bid detail page - attachment download may fail")
+			print("Not on bid detail page - attachment download may fail")
 			play_notification_sound()
 			return []
 
 		# Look for attachment links
 		attachment_links = driver.find_elements(By.XPATH, "//div[contains(@id, 'rgBidDocuments') or contains(@id, 'rgBidAttachments')]//a[contains(@class, 'procLink')]")
 		if not attachment_links:
-			print("❌ No attachment links found")
+			print("No attachment links found")
 			return []
 			
 		print(f"✓ Found {len(attachment_links)} attachment links:")
@@ -990,7 +990,7 @@ def download_attachments(driver, bid_folder):
 						time.sleep(10)
 				
 				if not download_complete:
-					print(f"❌ Download failed for {filename}")
+					print(f"Download failed for {filename}")
 					play_notification_sound()
 			
 			print(f"\n=== Download Process Complete ===")
@@ -1001,11 +1001,11 @@ def download_attachments(driver, bid_folder):
 					print(f"  {idx}. {att}")
 			return list(set(attachments))  # Remove any duplicates
 		
-		print("\n❌ No files queued for download")
+		print("\nNo files queued for download")
 		return []
 		
 	except Exception as e:
-		print(f"\n❌ Error in download_attachments: {str(e)}")
+		print(f"\nError in download_attachments: {str(e)}")
 		logger.error(f"[ERROR] Error in download_attachments: {str(e)}")
 		play_notification_sound()
 		return []

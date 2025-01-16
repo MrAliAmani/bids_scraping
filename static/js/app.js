@@ -60,6 +60,41 @@ document.addEventListener('DOMContentLoaded', () => {
     fetchInitialData();
     setInterval(fetchUpdates, 2000);
     setInterval(checkAppStatus, 5000);
+
+    // Add event listeners for Excel processing and upload buttons
+    document.getElementById('processExcelBtn').addEventListener('click', function() {
+        // Send a request to start Excel processing
+        fetch('/api/process_excel', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        }).then(response => {
+            if (response.ok) {
+                console.log('Excel processing started');
+                // Optionally update UI to reflect processing status
+            } else {
+                console.error('Failed to start Excel processing');
+            }
+        });
+    });
+
+    document.getElementById('uploadDataBtn').addEventListener('click', function() {
+        // Send a request to start data upload
+        fetch('/api/upload_data', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        }).then(response => {
+            if (response.ok) {
+                console.log('Data upload started');
+                // Optionally update UI to reflect upload status
+            } else {
+                console.error('Failed to start data upload');
+            }
+        });
+    });
 });
 
 function fetchInitialData() {
