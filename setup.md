@@ -62,6 +62,11 @@
      C:\Users\[your_username]\Miniconda3\Library\bin
      ```
 
+5. Run the command below to setupt the dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
 ### "Path not found" errors
 - Double-check your username in the paths
 - Verify Miniconda installed correctly

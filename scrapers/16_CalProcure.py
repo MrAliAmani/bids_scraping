@@ -358,14 +358,14 @@ class CalProcureScraper:
 
         try:
             # Wait for and click Advanced Search button
-            advanced_search = WebDriverWait(self.driver, 20).until(
+            advanced_search = WebDriverWait(self.driver, 25).until(
                 EC.element_to_be_clickable((By.ID, "RESP_INQA_WK_AUC_SRCH_ADVBSC_PB"))
             )
             self.driver.execute_script("arguments[0].click();", advanced_search)
             print("✅ Clicked Advanced Search button")
 
             # Wait for date input to be present and visible
-            date_input = WebDriverWait(self.driver, 20).until(
+            date_input = WebDriverWait(self.driver, 25).until(
                 EC.presence_of_element_located(
                     (By.ID, "RESP_INQA_WK_AUC_FROM_START_DT")
                 )
@@ -419,7 +419,7 @@ class CalProcureScraper:
 
                     # Wait for results to load
                     print("⏳ Waiting for search results...")
-                    time.sleep(10)  # Initial wait
+                    time.sleep(20)  # Initial wait
 
                     # Wait for table to be present
                     table = WebDriverWait(self.driver, 30).until(
@@ -462,7 +462,7 @@ class CalProcureScraper:
                     print(
                         f"⚠️ Attempt {attempt + 1} failed to get search results: {str(e)}"
                     )
-                    time.sleep(10)  # Increased wait between retries
+                    time.sleep(20)  # Increased wait between retries
 
         except Exception as e:
             print(f"❌ Error applying filters: {str(e)}")

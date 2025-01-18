@@ -67,25 +67,57 @@ def setup_driver(download_dir):
     return webdriver.Chrome(options=chrome_options)
 
 
-def wait_and_click(driver, by, value, max_attempts=3, wait_time=20):
+def wait_and_click(driver, by, value, wait_time=60, retries=3):
     """Wait for an element to be clickable and then click it, with retries."""
-    for attempt in range(max_attempts):
+    for attempt in range(retries):
         try:
+            # Wait for document ready state with longer timeout
+            WebDriverWait(driver, wait_time).until(
+                lambda d: d.execute_script("return document.readyState") == "complete"
+            )
+            
+            # Wait for any jQuery animations with longer timeout
+            WebDriverWait(driver, wait_time).until(
+                lambda d: d.execute_script("return jQuery.active == 0") if driver.execute_script("return typeof jQuery !== 'undefined'") else True
+            )
+            
+            # Wait for network requests to complete
+            WebDriverWait(driver, wait_time).until(
+                lambda d: d.execute_script(
+                    "return window.performance.getEntriesByType('resource').filter(r => !r.responseEnd).length == 0"
+                )
+            )
+            
+            # Wait for element and click with longer timeout
             element = WebDriverWait(driver, wait_time).until(
                 EC.element_to_be_clickable((by, value))
             )
+            
+            # Scroll element into view
             driver.execute_script("arguments[0].scrollIntoView(true);", element)
-            time.sleep(1)  # Short pause to allow any animations to complete
-            element.click()
-            return
-        except (TimeoutException, StaleElementReferenceException) as e:
-            if attempt == max_attempts - 1:
-                print(
-                    f"Failed to click element after {max_attempts} attempts: {by}, {value}"
+            time.sleep(28)  # Longer pause after scroll
+            
+            # Try to click with both Selenium and JavaScript
+            try:
+                element.click()
+            except:
+                driver.execute_script("arguments[0].click();", element)
+                time.sleep(7)  # Wait after JavaScript click
+                
+            return element
+            
+        except Exception as e:
+            if attempt < retries - 1:
+                print(f"Attempt {attempt + 1} failed. Retrying...")
+                time.sleep(15)  # Longer wait between retries
+                # Try refreshing the page
+                driver.refresh()
+                WebDriverWait(driver, wait_time).until(
+                    lambda d: d.execute_script("return document.readyState") == "complete"
                 )
+            else:
+                print(f"Failed to click element after {retries} attempts: {by}, {value}")
                 raise e
-            print(f"Attempt {attempt + 1} failed. Retrying...")
-            time.sleep(2)  # Wait before retrying
 
 
 def is_within_date_range(date_str, days):
@@ -395,7 +427,8 @@ def download_attachments(driver, bid_number, main_folder, downloads_folder):
         print(f"Completed downloading attachments for bid {bid_number}")
 
     except Exception as e:
-        print(f"Error in download_attachments for bid {bid_number}: {str(e)}")
+        pass
+        # print(f"Error in download_attachments for bid {bid_number}: {str(e)}")
 
 
 def main():

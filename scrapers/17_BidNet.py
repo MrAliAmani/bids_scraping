@@ -1101,7 +1101,6 @@ class BidNetScraper:
                 return True
             return False
         except Exception as e:
-            self.logger.error(f"Failed to apply sort order: {str(e)}")
             return False
 
     def extract_bid_links(self) -> List[Dict[str, str]]:
@@ -1109,7 +1108,7 @@ class BidNetScraper:
         try:
             # Apply descending sort order first
             if not self.apply_sort_order_descending():
-                self.logger.warning("Failed to sort bids by date, continuing with default order")
+                print("Continuing with default order")
 
             # Get all bid details using JavaScript
             script = """

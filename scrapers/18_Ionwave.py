@@ -301,7 +301,7 @@ def download_attachment(driver, url, folder_path, filename):
 			except Exception as cleanup_error:
 				logger.warning(f"[WARNING] Could not remove temporary file {temp_path}: {str(cleanup_error)}")
 
-def wait_for_page_update(driver, timeout=10):
+def wait_for_page_update(driver, timeout=60):
 	"""Wait for page to update after sorting"""
 	try:
 		# Wait for the loading indicator to disappear (if present)

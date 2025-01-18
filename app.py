@@ -60,6 +60,9 @@ auto_started_scripts = set()  # Track scripts that have been automatically start
 # Global variables
 yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
 
+active_scripts_lock = threading.Lock()
+
+
 app = Flask(__name__, static_folder="static", template_folder="templates")
 app.config["SECRET_KEY"] = "your-secret-key"
 app.config["UPLOAD_FOLDER"] = os.path.join(os.getcwd(), yesterday)
@@ -307,18 +310,27 @@ console_display = ConsoleDisplay()
 # Add this function to set up logging for individual scripts
 def setup_script_logging(script_name: str, status: str) -> str:
     """Setup logging for individual scripts with color coding"""
-    # Get script base name
-    script_base = os.path.splitext(os.path.basename(script_name))[0]
+    try:
+        # Get script base name
+        script_base = os.path.splitext(os.path.basename(script_name))[0]
 
-    # Create yesterday's date folder
-    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-    yesterday_folder = os.path.join(os.getcwd(), yesterday)
-    os.makedirs(yesterday_folder, exist_ok=True)
+        # Create yesterday's date folder
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        yesterday_folder = os.path.join(os.getcwd(), yesterday)
+        os.makedirs(yesterday_folder, exist_ok=True)
 
-    # Create log file path directly in yesterday's folder
-    log_file = os.path.join(yesterday_folder, f"{script_base}.log")
-
-    return log_file
+        # Create log file path directly in yesterday's folder
+        log_file = os.path.join(yesterday_folder, f"{script_base}.log")
+        
+        # Create the log file immediately with initial content
+        with open(log_file, 'w', encoding='utf-8') as f:
+            f.write(f"Log file created for {script_name} at {datetime.now()}\n")
+            f.write("-" * 80 + "\n")
+        
+        return log_file
+    except Exception as e:
+        logger.error(f"Error setting up logging for {script_name}: {str(e)}")
+        return None
 
 
 # Add this near the top with other global variables
@@ -326,10 +338,37 @@ main_log_buffer = []  # Store main terminal logs
 
 
 def log_to_ui(message):
-    """Log message to both terminal and UI"""
-    logger.info(message)
-    main_log_buffer.append(message)
-    socketio.emit("main_log", {"message": message})
+    """Log message to both terminal and UI, filtering out unwanted messages"""
+    try:
+        # Skip stack traces and other unwanted messages
+        if any(skip in message for skip in [
+            "Stacktrace:",
+            "GetHandleVerifier",
+            "BaseThreadInitThunk",
+            "RtlUserThreadStart",
+            "(No symbol)",
+            "0x0000",
+            "CategoryInfo",
+            "FullyQualifiedErrorId",
+            "+ CategoryInfo",
+            "+ FullyQualifiedErrorId",
+            "char:",
+            "At line:"
+        ]):
+            # Still log to file but not UI
+            logger.debug(message)
+            return
+            
+        # Clean up the message
+        cleaned_message = message.split('\n')[0]  # Take only first line if multiple lines
+        if len(cleaned_message) > 200:  # Truncate very long messages
+            cleaned_message = cleaned_message[:200] + "..."
+            
+        logger.info(cleaned_message)
+        main_log_buffer.append(cleaned_message)
+        socketio.emit("main_log", {"message": cleaned_message})
+    except Exception as e:
+        logger.error(f"Error in log_to_ui: {str(e)}")
 
 
 def parse_arguments():
@@ -527,19 +566,23 @@ def match_category(title: str, description: str, category: str, api_categories: 
 def run_script(script_name):
     """Run a single scraper script with enhanced logging and progress tracking"""
     try:
-        if script_name in active_scripts:
-            log_to_ui(f"Script {script_name} is already running")
-            return
+        with active_scripts_lock:
+            if script_name in active_scripts:
+                log_to_ui(f"Script {script_name} is already running")
+                return
+            active_scripts.add(script_name)
             
-        active_scripts.add(script_name)
         script_infos[script_name].start_time = datetime.now()
         script_infos[script_name].status = ScriptStatus.RUNNING
         script_infos[script_name].progress = 0
         script_infos[script_name].excel_status = 'Pending'
         script_infos[script_name].excel_progress = 0
 
-        # Set up logging
+        # Set up logging immediately
         log_file = setup_script_logging(script_name, "Running")
+        if not log_file:
+            raise Exception("Failed to set up logging")
+            
         script_infos[script_name].log_file = log_file
 
         # Create completed folder path
@@ -549,8 +592,34 @@ def run_script(script_name):
             f"{script_base}_COMPLETED"
         )
 
-        # Prepare PowerShell command with output redirection
-        powershell_command = f"conda activate bids; & python {script_name} | Tee-Object -FilePath '{log_file}' -Append"
+        # Prepare PowerShell command with output redirection and auto-close
+        # First set the window title to script name, then run the script
+        powershell_command = f"""
+$Host.UI.RawUI.WindowTitle = '{script_base}';
+conda activate bids;
+$env:SELENIUM_DISABLE_GPU = 1;
+$env:CHROME_DISABLE_GPU = 1;
+$env:FIREFOX_DISABLE_GPU = 1;
+try {{
+    & python {script_name} 2>&1 | ForEach-Object {{
+        $line = $_
+        # Skip PowerShell error messages and command lines
+        if (-not ($line -match "At line:|char:|CategoryInfo|RemoteException|NativeCommandError|FullyQualifiedErrorId|\\+\\s+&\\s+python\\s+scrapers/")) {{
+            # Clean up any remaining error patterns
+            $line = $line -replace "\\+\\s+~~~~~~~~~~~~~~~~+", ""
+            $line | Tee-Object -FilePath '{log_file}' -Append
+        }}
+    }}
+}} catch {{
+    # Only log actual error message, not the PowerShell formatting
+    $errorMsg = $_.Exception.Message -replace "At line:.*", "" -replace "\\+.*", ""
+    $errorMsg | Tee-Object -FilePath '{log_file}' -Append
+}}
+if ($LASTEXITCODE -eq 0 -or (Test-Path '{completed_folder}')) {{
+    Start-Sleep -Seconds 1;
+    Stop-Process -Id $PID;
+}}
+"""
         
         # Set up environment variables for the process
         env = os.environ.copy()
@@ -558,6 +627,16 @@ def run_script(script_name):
         env["HEADLESS"] = "False"  # Generic headless flag
         env["PYTHONUNBUFFERED"] = "1"  # Ensure Python output is unbuffered
         env["PYTHONIOENCODING"] = "utf-8"  # Ensure proper encoding
+        # Add GPU acceleration disable flags
+        env["SELENIUM_DISABLE_GPU"] = "1"
+        env["CHROME_DISABLE_GPU"] = "1"
+        env["FIREFOX_DISABLE_GPU"] = "1"
+        # Chrome-specific flags
+        env["CHROME_OPTS"] = "--disable-gpu --no-sandbox --disable-dev-shm-usage"
+        # Firefox-specific flags
+        env["MOZ_DISABLE_GMP_SANDBOX"] = "1"
+        env["MOZ_DISABLE_GPU_SANDBOX"] = "1"
+        env["MOZ_DISABLE_GPU_PROCESS"] = "1"
 
         # Start PowerShell process with visible window
         script_process = subprocess.Popen(
@@ -610,7 +689,12 @@ def run_script(script_name):
         script_infos[script_name].status = ScriptStatus.ERROR
 
     finally:
-        active_scripts.remove(script_name)
+        with active_scripts_lock:
+            try:
+                active_scripts.remove(script_name)
+            except KeyError:
+                logger.warning(f"Script {script_name} not found in active_scripts during cleanup")
+                
         if script_name in running_processes:
             del running_processes[script_name]
         script_infos[script_name].end_time = datetime.now()
@@ -620,8 +704,7 @@ def run_script(script_name):
         
         # Check if this was the last script to complete
         if len(active_scripts) == 0 and all_scripts_completed():
-            log_to_ui("All scripts have completed. Starting Excel processing...")
-            check_and_start_excel_processing()
+            log_to_ui("All scripts have completed. Excel processing and upload can now be started manually.")
         
         # Start next script to maintain concurrent execution
         if not terminate_flag.is_set():
@@ -1241,7 +1324,25 @@ def create_app():
             if script_base.endswith('.py'):
                 script_base = script_base[:-3]
             
-            log_file = os.path.join(log_folder, f"{script_base}.log")
+            # First try to find the log file in script_infos
+            script_full_name = f"scrapers/{script_base}.py"
+            if script_full_name in script_infos and script_infos[script_full_name].log_file:
+                log_file = script_infos[script_full_name].log_file
+            else:
+                # If not found in script_infos, look for any log file matching the pattern
+                log_file = os.path.join(log_folder, f"{script_base}.log")
+                
+                # If not found, also check for status-suffixed log files
+                if not os.path.exists(log_file):
+                    possible_files = [
+                        os.path.join(log_folder, f"{script_base}_COMPLETED.log"),
+                        os.path.join(log_folder, f"{script_base}_ERROR.log"),
+                        os.path.join(log_folder, f"{script_base}_SUCCESS.log")
+                    ]
+                    for possible_file in possible_files:
+                        if os.path.exists(possible_file):
+                            log_file = possible_file
+                            break
             
             if not os.path.exists(log_file):
                 return jsonify({
@@ -1249,20 +1350,28 @@ def create_app():
                     "message": "No logs available yet. Logs will appear here once the script starts running."
                 }), 404
             
-            # Read as binary first
-            with open(log_file, 'rb') as f:
-                content = f.read()
-            
-            # Remove BOM if present
-            if content.startswith(b'\xff\xfe'):  # UTF-16 BOM
-                content = content[2:].decode('utf-16')
-            elif content.startswith(b'\xef\xbb\xbf'):  # UTF-8 BOM
-                content = content[3:].decode('utf-8')
-            else:
-                content = content.decode('utf-8', errors='ignore')
+            try:
+                # Try reading with UTF-8 first
+                with open(log_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+            except UnicodeDecodeError:
+                # If UTF-8 fails, try reading as binary and handle encoding
+                with open(log_file, 'rb') as f:
+                    content = f.read()
+                    # Try different encodings
+                    if content.startswith(b'\xff\xfe'):  # UTF-16 BOM
+                        content = content[2:].decode('utf-16')
+                    elif content.startswith(b'\xef\xbb\xbf'):  # UTF-8 BOM
+                        content = content[3:].decode('utf-8')
+                    else:
+                        content = content.decode('utf-8', errors='ignore')
             
             # Clean up any remaining invalid characters at start
             content = content.lstrip('\ufeff\ufffe')
+            
+            # Update script_infos with the found log file if it's not already set
+            if script_full_name in script_infos and not script_infos[script_full_name].log_file:
+                script_infos[script_full_name].log_file = log_file
             
             return jsonify({
                 "status": "success",
@@ -1271,7 +1380,7 @@ def create_app():
             })
             
         except Exception as e:
-            logger.error(f"Error accessing logs: {str(e)}")
+            logger.error(f"Error accessing logs for {script_name}: {str(e)}")
             return jsonify({
                 "status": "error",
                 "message": f"Error accessing logs: {str(e)}"
@@ -1468,12 +1577,31 @@ def update_log_file_status(script_name: str, status: str) -> None:
     try:
         if script_infos[script_name].log_file:
             old_path = script_infos[script_name].log_file
-            new_path = old_path.replace("IN_PROGRESS", status)
+            # Get the directory and base name
+            dir_name = os.path.dirname(old_path)
+            base_name = os.path.basename(old_path)
+            
+            # Remove any existing status suffix before adding new one
+            base_name = base_name.replace('_COMPLETED', '').replace('_ERROR', '').replace('_SUCCESS', '').replace('_IN_PROGRESS', '')
+            if base_name.endswith('.log'):
+                base_name = base_name[:-4]
+            
+            # Create new path with status
+            new_path = os.path.join(dir_name, f"{base_name}_{status}.log")
+            
+            # Rename the file if it exists
             if os.path.exists(old_path):
-                os.rename(old_path, new_path)
-                script_infos[script_name].log_file = new_path
+                try:
+                    os.rename(old_path, new_path)
+                    script_infos[script_name].log_file = new_path
+                    logger.info(f"Updated log file status for {script_name}: {new_path}")
+                except Exception as rename_error:
+                    logger.error(f"Error renaming log file from {old_path} to {new_path}: {str(rename_error)}")
+            else:
+                logger.warning(f"Log file not found for status update: {old_path}")
     except Exception as e:
-        logger.error(f"Error updating log file status: {str(e)}")
+        logger.error(f"Error updating log file status for {script_name}: {str(e)}")
+        logger.error(traceback.format_exc())
 
 # Add this function near the top with other helper functions
 def all_scripts_completed() -> bool:
@@ -1502,3 +1630,4 @@ if __name__ == "__main__":
     except Exception as e:
         log_to_ui(f"Application error: {str(e)}")
         terminate_scripts()
+        
