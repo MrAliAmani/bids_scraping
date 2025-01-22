@@ -144,18 +144,272 @@ def remove_resources(script_name):
 def process_excel_files(completed_folder_path: str) -> bool:
     """Process Excel files with API data before upload"""
     try:
-        print(f"\n Processing Excel files in {completed_folder_path}")
+        print(f"\nProcessing Excel files in {completed_folder_path}")
+        
+        # Initialize processor
         processor = ExcelProcessor()
+        
+        # Fetch API data first
+        print("\n📥 Fetching API data...")
+        processor.api_categories = processor.fetch_api_data("category")
+        processor.api_notice_types = processor.fetch_api_data("notice")
+        processor.api_agencies = processor.fetch_api_data("agency")
+        processor.api_states = processor.fetch_api_data("state", {"country_id": 10})
+        
+        if not all([processor.api_categories, processor.api_notice_types, 
+                   processor.api_agencies, processor.api_states]):
+            print("❌ Failed to fetch API data")
+            return False
+            
+        print("✅ API data fetched successfully")
 
-        if processor.process_completed_folder(completed_folder_path):
-            print("✅ Successfully processed all Excel files")
-            return True
-        else:
-            print("❌ Failed to process some Excel files")
+        # Find all Excel files
+        excel_files = glob.glob(os.path.join(completed_folder_path, "*.xlsx"))
+        if not excel_files:
+            print("❌ No Excel files found to process")
             return False
 
+        print(f"📊 Found {len(excel_files)} Excel files to process")
+        
+        # Process each Excel file
+        success = True
+        for file_idx, excel_file in enumerate(excel_files, 1):
+            try:
+                print(f"\nProcessing file {file_idx}/{len(excel_files)}: {os.path.basename(excel_file)}")
+                
+                # Load Excel file
+                df = pd.read_excel(excel_file)
+                total_rows = len(df)
+                print(f"📊 Total rows in file: {total_rows}")
+
+                # Handle different title column names
+                title_column = 'Solicitation Title' if 'Solicitation Title' in df.columns else 'Title'
+                if title_column not in df.columns:
+                    print("❌ No Title or Solicitation Title column found")
+                    continue
+
+                # Add API columns next to related columns
+                if 'Category' in df.columns:
+                    category_pos = df.columns.get_loc('Category') + 1
+                    df.insert(category_pos, 'API_Category', None)
+                    df.insert(category_pos + 1, 'API_Category_ID', None)
+                else:
+                    df['API_Category'] = None
+                    df['API_Category_ID'] = None
+
+                if 'Notice Type' in df.columns:
+                    notice_pos = df.columns.get_loc('Notice Type') + 1
+                    df.insert(notice_pos, 'API_Notice_Type', None)
+                else:
+                    df['API_Notice_Type'] = None
+
+                if 'Agency' in df.columns:
+                    agency_pos = df.columns.get_loc('Agency') + 1
+                    df.insert(agency_pos, 'API_Agency', None)
+                else:
+                    df['API_Agency'] = None
+
+                if 'State' in df.columns:
+                    state_pos = df.columns.get_loc('State') + 1
+                    df.insert(state_pos, 'API_State', None)
+                else:
+                    df['API_State'] = None
+
+                print("\nProcessing rows:")
+                # Process each row
+                for index, row in df.iterrows():
+                    try:
+                        progress = int(((index + 1) / total_rows) * 100)
+                        print(f"\rProcessing file {file_idx}/{len(excel_files)} - {os.path.basename(excel_file)} - Row {index + 1}/{total_rows} ({progress}%)", end='', flush=True)
+
+                        # Get fields for matching
+                        title = str(row.get(title_column, ''))
+                        description = str(row.get('Description', ''))
+                        original_category = str(row.get('Category', ''))
+                        agency_name = str(row.get('Agency', ''))
+                        bid_url = str(row.get('Bid Detail Page URL', ''))
+
+                        print(f"\n\nProcessing Row {index + 1}:")
+                        print(f"Original Category: {original_category}")
+                        print(f"Original Agency: {agency_name}")
+                        print(f"Original Notice Type from title: {title}")
+                        print(f"Original State info from URL: {bid_url}")
+
+                        # Match category using improved matching
+                        category_match = None
+                        category_id = None
+                        
+                        # Split original category if multiple categories are present
+                        categories = [cat.strip() for cat in original_category.split(';') if cat.strip()]
+                        
+                        for cat in categories:
+                            # Try exact match first
+                            for api_cat in processor.api_categories:
+                                if cat.lower() in api_cat['name'].lower() or api_cat['name'].lower() in cat.lower():
+                                    category_match = api_cat['name']
+                                    category_id = api_cat['id']
+                                    break
+                            
+                            # If no exact match, try fuzzy matching
+                            if not category_match:
+                                # Use title and description for context
+                                combined_text = f"{cat} {title} {description}"
+                                for api_cat in processor.api_categories:
+                                    if any(word.lower() in combined_text.lower() for word in api_cat['name'].split()):
+                                        category_match = api_cat['name']
+                                        category_id = api_cat['id']
+                                        break
+
+                            if category_match:
+                                break
+
+                        if category_match:
+                            df.loc[index, 'API_Category'] = category_match
+                            df.loc[index, 'API_Category_ID'] = category_id
+                            print(f"✓ Matched Category: {category_match} (ID: {category_id})")
+                        else:
+                            print("✗ No category match found")
+
+                        # Match notice type with improved matching
+                        notice_match = None
+                        combined_text = f"{title} {description}"
+                        
+                        # Define common notice type keywords
+                        notice_types = {
+                            'Request For Proposal': ['rfp', 'request for proposal', 'proposal'],
+                            'Invitation For Bid': ['ifb', 'invitation for bid', 'invitation to bid'],
+                            'Request For Quote': ['rfq', 'request for quote', 'quotation']
+                        }
+                        
+                        for api_notice in processor.api_notice_types:
+                            notice_name = api_notice['name']
+                            keywords = notice_types.get(notice_name, [notice_name.lower()])
+                            
+                            if any(keyword in combined_text.lower() for keyword in keywords):
+                                notice_match = notice_name
+                                break
+
+                        if notice_match:
+                            df.loc[index, 'API_Notice_Type'] = notice_match
+                            print(f"✓ Matched Notice Type: {notice_match}")
+                        else:
+                            print("✗ No notice type match found")
+
+                        # Match agency with improved matching
+                        agency_match = None
+                        
+                        # Clean agency name
+                        clean_agency = agency_name.strip().lower()
+                        
+                        for api_agency in processor.api_agencies:
+                            api_agency_name = api_agency['name'].lower()
+                            
+                            # Try exact match first
+                            if clean_agency == api_agency_name:
+                                agency_match = api_agency['name']
+                                break
+                                
+                            # Try partial match
+                            if clean_agency in api_agency_name or api_agency_name in clean_agency:
+                                agency_match = api_agency['name']
+                                break
+                                
+                            # Try matching from URL
+                            if bid_url and any(word in bid_url.lower() for word in api_agency_name.split()):
+                                agency_match = api_agency['name']
+                                break
+
+                        if agency_match:
+                            df.loc[index, 'API_Agency'] = agency_match
+                            print(f"✓ Matched Agency: {agency_match}")
+                        else:
+                            print("✗ No agency match found")
+
+                        # Match state with improved matching
+                        state_match = None
+                        
+                        # Extract state from URL or agency name
+                        for api_state in processor.api_states:
+                            state_name = api_state['name'].lower()
+                            state_code = api_state['code'].lower()
+                            
+                            # Check URL
+                            if bid_url and (state_name in bid_url.lower() or state_code in bid_url.lower()):
+                                state_match = api_state['name']
+                                break
+                                
+                            # Check agency name
+                            if agency_name and (state_name in agency_name.lower() or state_code in agency_name.lower()):
+                                state_match = api_state['name']
+                                break
+                                
+                            # Check description
+                            if description and (state_name in description.lower() or state_code in description.lower()):
+                                state_match = api_state['name']
+                                break
+
+                        if state_match:
+                            df.loc[index, 'API_State'] = state_match
+                            print(f"✓ Matched State: {state_match}")
+                        else:
+                            print("✗ No state match found")
+
+                        print("-" * 50)  # Separator between rows
+
+                    except Exception as e:
+                        print(f"\n❌ Error processing row {index + 1}: {str(e)}")
+                        continue
+
+                print("\n")  # New line after progress bar
+                
+                # Verify data was assigned before saving
+                print("\nVerifying data assignment:")
+                for col in ['API_Category', 'API_Category_ID', 'API_Notice_Type', 'API_Agency', 'API_State']:
+                    filled_count = df[col].notna().sum()
+                    print(f"{col}: {filled_count}/{total_rows} rows filled")
+                    if filled_count > 0:
+                        print("Sample values:")
+                        sample_values = df[df[col].notna()][col].head()
+                        for i, val in enumerate(sample_values, 1):
+                            print(f"  {i}. {val}")
+
+                # Save processed file
+                try:
+                    df.to_excel(excel_file, index=False, engine='openpyxl')
+                    print(f"\n✅ Saved processed file: {os.path.basename(excel_file)}")
+                    
+                    # Print final DataFrame info
+                    print("\nFinal DataFrame columns and non-null counts:")
+                    print(df.info())
+                    
+                except Exception as e:
+                    print(f"❌ Error saving file: {str(e)}")
+                    success = False
+                    continue
+
+                # Verify save was successful
+                try:
+                    verification_df = pd.read_excel(excel_file)
+                    api_columns_present = all(col in verification_df.columns for col in ['API_Category', 'API_Category_ID', 'API_Notice_Type', 'API_Agency', 'API_State'])
+                    data_present = any(verification_df[col].notna().any() for col in ['API_Category', 'API_Category_ID', 'API_Notice_Type', 'API_Agency', 'API_State'])
+                    
+                    if api_columns_present and data_present:
+                        print("✅ Verified API columns and data were saved successfully")
+                    else:
+                        print("⚠️ Warning: Some API columns or data may not have been saved properly")
+                        success = False
+                except Exception as e:
+                    print(f"❌ Error verifying save: {str(e)}")
+                    success = False
+
+            except Exception as e:
+                print(f"\n❌ Error processing file {os.path.basename(excel_file)}: {str(e)}")
+                success = False
+
+        return success
+
     except Exception as e:
-        print(f"❌ Error during Excel processing: {str(e)}")
+        print(f"\n❌ Error during Excel processing: {str(e)}")
         return False
 
 
@@ -172,11 +426,12 @@ def upload_data(completed_folder_path):
             return False, f"Folder is empty: {completed_folder_path}"
 
         print(f"Found {len(contents)} items in {completed_folder_path}")
-        print(f"Contents: {contents}")
 
         # Process Excel files before upload
+        print("\n🔄 Processing Excel files before upload...")
         if not process_excel_files(completed_folder_path):
-            return False, "Failed to process Excel files"
+            return False, "Failed to process Excel files - upload cancelled"
+        print("✅ Excel processing completed successfully")
 
         # Set up environment for proper encoding
         env = os.environ.copy()
@@ -298,6 +553,35 @@ class ScriptProgress:
             )
 
 
+# Add near the top with other global variables
+class ProcessingStats:
+    def __init__(self):
+        self.total_scripts = len(scripts)
+        self.completed_scripts = 0
+        self.excel_processed = 0
+        self.uploads_completed = 0
+        
+    def update_progress(self):
+        """Calculate and return overall progress"""
+        script_progress = (self.completed_scripts / self.total_scripts) * 60  # 60% weight
+        excel_progress = (self.excel_processed / max(1, len(glob.glob(os.path.join(yesterday, "*_COMPLETED"))))) * 20  # 20% weight
+        upload_progress = (self.uploads_completed / max(1, len(glob.glob(os.path.join(yesterday, "*_COMPLETED"))))) * 20  # 20% weight
+        return int(script_progress + excel_progress + upload_progress)
+
+    def log_progress(self):
+        """Log current progress"""
+        progress = self.update_progress()
+        completed = self.completed_scripts
+        total = self.total_scripts
+        print(f"\n=== Processing Progress: {progress}% ===")
+        print(f"Scripts: {completed}/{total} ({int((completed/total)*100)}%)")
+        print(f"Excel Processing: {self.excel_processed} folders")
+        print(f"Uploads Completed: {self.uploads_completed} folders")
+        print("=" * 40)
+
+# Initialize stats tracker
+processing_stats = ProcessingStats()
+
 # Modify the run_script function to use rich for output
 def run_script(script_name):
     if terminate_flag.is_set():
@@ -413,87 +697,69 @@ def run_script(script_name):
             )
             running_processes[script_name] = process
 
-            # Wait for process to complete
-            return_code = process.wait()
+            # Wait for process to complete or detect if window was closed
+            while True:
+                try:
+                    return_code = process.wait(timeout=1)  # Check every second
+                    break
+                except subprocess.TimeoutExpired:
+                    # Check if process is still running
+                    if process.poll() is not None:  # Process ended
+                        return_code = process.returncode
+                        break
+                    continue
 
             end_time = datetime.now()
             execution_time = end_time - start_time
 
             with print_lock:
-                if return_code == 0:
+                if return_code == 0 or process.poll() is not None:  # Success or window closed
                     print(f"\n{'='*50}")
                     print(f"Script {script_name} completed successfully")
                     print(f"{'='*50}")
                     script_statuses[script_name] = ScriptStatus.SUCCESS
-
-                    try:
-                        # Get the script base name without extension
-                        script_base_name = script_name.split(".")[0].split("/")[-1]
-                        completed_folder = f"{script_base_name}_COMPLETED"
-                        date_folder = os.path.join(os.getcwd(), yesterday)
-                        completed_folder_path = os.path.join(
-                            date_folder, completed_folder
-                        )
-
-                        print(
-                            f"\n🔍 Looking for completed folder at: {completed_folder_path}"
-                        )
-
-                        if os.path.exists(completed_folder_path):
-                            print(f"Found completed folder: {completed_folder_path}")
-
-                            # Process Excel files and upload
-                            print(f"\n📤 Attempting to upload {completed_folder}")
-                            success, message = upload_data(completed_folder_path)
-
-                            if success:
-                                print(f"\n✅ Successfully uploaded {completed_folder}")
-                                # Folder is already removed in upload_data after successful upload
-                            else:
-                                print(f"\n❌ Upload failed for {completed_folder}")
-                                print(f"Error details: {message}")
-                                logging.error(
-                                    f"Upload failed for {completed_folder}: {message}"
-                                )
+                    
+                    # Look for and upload COMPLETED folder immediately
+                    script_base = os.path.splitext(os.path.basename(script_name))[0]
+                    completed_folder = os.path.join(yesterday, f"{script_base}_COMPLETED")
+                    if os.path.exists(completed_folder):
+                        success, message = upload_data(completed_folder)
+                        if success:
+                            print(f"✅ Successfully uploaded {completed_folder}")
                         else:
-                            print(
-                                f"⚠️ No completed folder found at: {completed_folder_path}"
-                            )
-                            logging.warning(
-                                f"No completed folder found at: {completed_folder_path}"
-                            )
-
-                    except Exception as e:
-                        print(f"❌ Error during post-completion process: {str(e)}")
-                        logging.error(
-                            f"Error during post-completion process for {script_name}: {str(e)}"
-                        )
-                        print(f"Stack trace: {traceback.format_exc()}")
+                            print(f"❌ Failed to upload {completed_folder}: {message}")
+                    
+                    # Start next script
+                    start_next_script()
                 else:
-                    print(
-                        f"\nScript {script_name} failed with return code {return_code}"
-                    )
+                    print(f"\nScript {script_name} failed with return code {return_code}")
                     script_statuses[script_name] = ScriptStatus.ERROR
+                    start_next_script()  # Still try to start next script
 
                 print_status_report()
-
-            # Play completion sound
-            winsound.Beep(1000, 500)
 
         except Exception as e:
             with print_lock:
-                console.print(
-                    f"[bold red]Error running {script_name}: {str(e)}[/bold red]"
-                )
+                console.print(f"[bold red]Error running {script_name}: {str(e)}[/bold red]")
                 script_statuses[script_name] = ScriptStatus.ERROR
                 print_status_report()
+                start_next_script()  # Try to start next script even after error
 
         finally:
             if script_name in running_processes:
                 del running_processes[script_name]
-
-            # Start next script after this one finishes
-            if not terminate_flag.is_set():
+            
+            # Mark script as completed and update stats
+            if script_statuses[script_name] in [ScriptStatus.RUNNING, ScriptStatus.PENDING]:
+                script_statuses[script_name] = ScriptStatus.SUCCESS
+                processing_stats.completed_scripts += 1
+                processing_stats.log_progress()
+            
+            # Check if we should start Excel processing
+            if should_start_excel_processing():
+                check_and_start_excel_processing()
+            # Otherwise start next script if not stopping all
+            elif not terminate_flag.is_set():
                 start_next_script()
 
 
@@ -526,24 +792,29 @@ def close_script_window(window_title):
 
 
 def start_next_script():
-    """Start the next script from the queue"""
+    """Start the next pending script"""
     try:
+        # Get list of pending scripts
+        pending_scripts = [
+            script for script, status in script_statuses.items()
+            if status == ScriptStatus.PENDING
+        ]
+        
         # Count currently running scripts
-        running_count = len(
-            [s for s in script_statuses.values() if s == ScriptStatus.RUNNING]
-        )
-
-        # Only start new script if we have less than max_concurrent_scripts running
-        if (
-            running_count < max_concurrent_scripts
-            and not script_queue.empty()
-            and not terminate_flag.is_set()
-        ):
-            next_script = script_queue.get()
+        running_count = len([
+            script for script, status in script_statuses.items()
+            if status == ScriptStatus.RUNNING
+        ])
+        
+        # Start next script if we have pending scripts and room to run more
+        if pending_scripts and running_count < max_concurrent_scripts and not terminate_flag.is_set():
+            next_script = pending_scripts[0]
+            script_statuses[next_script] = ScriptStatus.RUNNING  # Mark as running before starting
             thread = threading.Thread(target=run_script, args=(next_script,))
             thread.daemon = True
             thread.start()
             return True
+            
         return False
     except Exception as e:
         print(f"Error starting next script: {e}")
@@ -864,3 +1135,30 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# Add these helper functions near the top
+def all_scripts_completed() -> bool:
+    """Check if all scripts have completed (either success or error)"""
+    return all(status in [ScriptStatus.SUCCESS, ScriptStatus.ERROR] 
+              for status in script_statuses.values())
+
+def should_start_excel_processing() -> bool:
+    """Check if we should start Excel processing"""
+    return all_scripts_completed() and not terminate_flag.is_set()
+
+def check_and_start_excel_processing():
+    """Start Excel processing if all scripts are done"""
+    if should_start_excel_processing():
+        print("\n🔄 All scripts completed. Starting Excel processing...")
+        # Get yesterday's date folder
+        yesterday_folder = os.path.join(os.getcwd(), yesterday)
+        if os.path.exists(yesterday_folder):
+            completed_folders = glob.glob(os.path.join(yesterday_folder, "*_COMPLETED"))
+            for folder in completed_folders:
+                if process_excel_files(folder):
+                    print(f"✅ Successfully processed {folder}")
+                    success, message = upload_data(folder)
+                    if success:
+                        print(f"✅ Successfully uploaded {folder}")
+                    else:
+                        print(f"❌ Failed to upload {folder}: {message}")

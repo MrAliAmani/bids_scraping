@@ -205,6 +205,29 @@ def get_default_path():
     return os.path.join(base_dir, yesterday)
 
 
+def cleanup_resources(folder_path: str) -> bool:
+    """Clean up resources after successful upload"""
+    try:
+        if not os.path.exists(folder_path):
+            print(f"[WARNING] Path not found for cleanup: {folder_path}")
+            return False
+
+        print(f"\n🧹 Cleaning up resources in: {folder_path}")
+        
+        # Remove the folder and all its contents
+        try:
+            shutil.rmtree(folder_path)
+            print(f"✅ Removed folder and contents: {folder_path}")
+            return True
+        except Exception as e:
+            print(f"❌ Error removing folder {folder_path}: {str(e)}")
+            return False
+
+    except Exception as e:
+        print(f"❌ Error during cleanup: {str(e)}")
+        return False
+
+
 def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="Upload files or folders to MinIO/S3")
@@ -268,6 +291,21 @@ def main():
             print(f"⚠️ Warning: Could not create backup of {args.path}: {e}")
 
     if success:
+        if args.backup:
+            try:
+                # Create backup before cleanup
+                backup_path = f"{args.path}_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                shutil.copytree(args.path, backup_path)
+                print(f"📁 Created backup at: {backup_path}")
+            except Exception as e:
+                print(f"⚠️ Warning: Could not create backup of {args.path}: {e}")
+        
+        # Clean up resources after successful upload
+        if cleanup_resources(args.path):
+            print("✅ Resources cleaned up successfully")
+        else:
+            print("⚠️ Warning: Some resources could not be cleaned up")
+            
         print("✅ Upload process completed successfully")
     else:
         print("❌ Upload process completed with errors")

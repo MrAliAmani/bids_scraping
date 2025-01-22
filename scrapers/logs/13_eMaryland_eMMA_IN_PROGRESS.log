@@ -1,0 +1,55 @@
+﻿**********************
+Windows PowerShell transcript start
+Start time: 20250122110001
+Username: DESKTOP-IO2J2VQ\AliAmani
+RunAs User: DESKTOP-IO2J2VQ\AliAmani
+Configuration Name: 
+Machine: DESKTOP-IO2J2VQ (Microsoft Windows NT 10.0.26100.0)
+Host Application: powershell -NoExit -Command [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::InputEncoding = [System.Text.Encoding]::UTF8; $OutputEncoding = [System.Text.Encoding]::UTF8; $host.ui.RawUI.WindowTitle = "Scraper - 13_eMaryland_eMMA.py"; Start-Transcript -Path "scrapers\logs\13_eMaryland_eMMA_IN_PROGRESS.log" -Append; Write-Host "`n=== Scraper Status ===" -ForegroundColor Cyan; Write-Host "Script: 13_eMaryland_eMMA.py" -ForegroundColor Yellow; Write-Host "Status: Running" -ForegroundColor Green; Write-Host "Start Time: 10:59:53" -ForegroundColor Yellow; Write-Host "Log File: scrapers\logs\13_eMaryland_eMMA_IN_PROGRESS.log" -ForegroundColor Cyan; Write-Host "==============================`n"; function Format-ScraperOutput {     param($Message)     $timestamp = Get-Date -Format "HH:mm:ss";     if ($Message -match "^ERROR|FAILED|CRITICAL") {         Write-Host "[$timestamp] " -NoNewline;         Write-Host $Message -ForegroundColor Red;     }     elseif ($Message -match "^WARNING") {         Write-Host "[$timestamp] " -NoNewline;         Write-Host $Message -ForegroundColor Yellow;     }     elseif ($Message -match "^SUCCESS|COMPLETED|✓") {         Write-Host "[$timestamp] " -NoNewline;         Write-Host $Message -ForegroundColor Green;     }     elseif ($Message -match "^INFO|PROGRESS") {         Write-Host "[$timestamp] " -NoNewline;         Write-Host $Message -ForegroundColor Cyan;     }     else {         Write-Host "[$timestamp] $Message";     } }; & "C:\Users\AliAmani\Miniconda3\envs\bids\python.exe" "scrapers/13_eMaryland_eMMA.py" --days 1 2>&1 | ForEach-Object {     Format-ScraperOutput $_;     $host.ui.RawUI.WindowTitle = "Scraper - 13_eMaryland_eMMA.py - Running..."; }; $exitCode = $LASTEXITCODE; Stop-Transcript; if ($exitCode -eq 0) {     Rename-Item -Path "scrapers\logs\13_eMaryland_eMMA_IN_PROGRESS.log" -NewName "scrapers\logs\13_eMaryland_eMMA_COMPLETED.log" -Force; } else {     Rename-Item -Path "scrapers\logs\13_eMaryland_eMMA_IN_PROGRESS.log" -NewName "scrapers\logs\13_eMaryland_eMMA_FAILED.log" -Force; } Write-Host "`n=== Final Status ===" -ForegroundColor Cyan; Write-Host "End Time: " -NoNewline; Write-Host $(Get-Date -Format "HH:mm:ss") -ForegroundColor Yellow; Write-Host "Duration: " -NoNewline; Write-Host $([math]::Round(((Get-Date) - (Get-Date "10:59:53")).TotalMinutes, 2)) -NoNewline -ForegroundColor Yellow; Write-Host " minutes"; if ($exitCode -eq 0) {     Write-Host "Status: " -NoNewline;     Write-Host "Completed Successfully" -ForegroundColor Green;     $host.ui.RawUI.WindowTitle = "Scraper - 13_eMaryland_eMMA.py - Completed ✓"; } else {     Write-Host "Status: " -NoNewline;     Write-Host "Failed" -ForegroundColor Red;     $host.ui.RawUI.WindowTitle = "Scraper - 13_eMaryland_eMMA.py - Failed ✗";     Write-Host "Exit Code: $exitCode" -ForegroundColor Red; } Write-Host "==============================" -ForegroundColor Cyan; exit $exitCode; 
+Process ID: 29288
+PSVersion: 5.1.26100.2161
+PSEdition: Desktop
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.26100.2161
+BuildVersion: 10.0.26100.2161
+CLRVersion: 4.0.30319.42000
+WSManStackVersion: 3.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+**********************
+Transcript started, output file is scrapers\logs\13_eMaryland_eMMA_IN_PROGRESS.log
+
+=== Scraper Status ===
+Script: 13_eMaryland_eMMA.py
+Status: Running
+Start Time: 10:59:53
+Log File: scrapers\logs\13_eMaryland_eMMA_IN_PROGRESS.log
+==============================
+**********************
+Windows PowerShell transcript start
+Start time: 20250122110231
+Username: DESKTOP-IO2J2VQ\AliAmani
+RunAs User: DESKTOP-IO2J2VQ\AliAmani
+Configuration Name: 
+Machine: DESKTOP-IO2J2VQ (Microsoft Windows NT 10.0.26100.0)
+Host Application: powershell -NoExit -Command [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::InputEncoding = [System.Text.Encoding]::UTF8; $OutputEncoding = [System.Text.Encoding]::UTF8; $host.ui.RawUI.WindowTitle = "Scraper - 13_eMaryland_eMMA.py"; Start-Transcript -Path "scrapers\logs\13_eMaryland_eMMA_IN_PROGRESS.log" -Append; Write-Host "`n=== Scraper Status ===" -ForegroundColor Cyan; Write-Host "Script: 13_eMaryland_eMMA.py" -ForegroundColor Yellow; Write-Host "Status: Running" -ForegroundColor Green; Write-Host "Start Time: 11:02:21" -ForegroundColor Yellow; Write-Host "Log File: scrapers\logs\13_eMaryland_eMMA_IN_PROGRESS.log" -ForegroundColor Cyan; Write-Host "==============================`n"; function Format-ScraperOutput {     param($Message)     $timestamp = Get-Date -Format "HH:mm:ss";     if ($Message -match "^ERROR|FAILED|CRITICAL") {         Write-Host "[$timestamp] " -NoNewline;         Write-Host $Message -ForegroundColor Red;     }     elseif ($Message -match "^WARNING") {         Write-Host "[$timestamp] " -NoNewline;         Write-Host $Message -ForegroundColor Yellow;     }     elseif ($Message -match "^SUCCESS|COMPLETED|✓") {         Write-Host "[$timestamp] " -NoNewline;         Write-Host $Message -ForegroundColor Green;     }     elseif ($Message -match "^INFO|PROGRESS") {         Write-Host "[$timestamp] " -NoNewline;         Write-Host $Message -ForegroundColor Cyan;     }     else {         Write-Host "[$timestamp] $Message";     } }; & "C:\Users\AliAmani\Miniconda3\envs\bids\python.exe" "scrapers/13_eMaryland_eMMA.py" --days 1 2>&1 | ForEach-Object {     Format-ScraperOutput $_;     $host.ui.RawUI.WindowTitle = "Scraper - 13_eMaryland_eMMA.py - Running..."; }; $exitCode = $LASTEXITCODE; Stop-Transcript; if ($exitCode -eq 0) {     Rename-Item -Path "scrapers\logs\13_eMaryland_eMMA_IN_PROGRESS.log" -NewName "scrapers\logs\13_eMaryland_eMMA_COMPLETED.log" -Force; } else {     Rename-Item -Path "scrapers\logs\13_eMaryland_eMMA_IN_PROGRESS.log" -NewName "scrapers\logs\13_eMaryland_eMMA_FAILED.log" -Force; } Write-Host "`n=== Final Status ===" -ForegroundColor Cyan; Write-Host "End Time: " -NoNewline; Write-Host $(Get-Date -Format "HH:mm:ss") -ForegroundColor Yellow; Write-Host "Duration: " -NoNewline; Write-Host $([math]::Round(((Get-Date) - (Get-Date "11:02:21")).TotalMinutes, 2)) -NoNewline -ForegroundColor Yellow; Write-Host " minutes"; if ($exitCode -eq 0) {     Write-Host "Status: " -NoNewline;     Write-Host "Completed Successfully" -ForegroundColor Green;     $host.ui.RawUI.WindowTitle = "Scraper - 13_eMaryland_eMMA.py - Completed ✓"; } else {     Write-Host "Status: " -NoNewline;     Write-Host "Failed" -ForegroundColor Red;     $host.ui.RawUI.WindowTitle = "Scraper - 13_eMaryland_eMMA.py - Failed ✗";     Write-Host "Exit Code: $exitCode" -ForegroundColor Red; } Write-Host "==============================" -ForegroundColor Cyan; exit $exitCode; 
+Process ID: 7924
+PSVersion: 5.1.26100.2161
+PSEdition: Desktop
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.26100.2161
+BuildVersion: 10.0.26100.2161
+CLRVersion: 4.0.30319.42000
+WSManStackVersion: 3.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+**********************
+Transcript started, output file is scrapers\logs\13_eMaryland_eMMA_IN_PROGRESS.log
+
+=== Scraper Status ===
+Script: 13_eMaryland_eMMA.py
+Status: Running
+Start Time: 11:02:21
+Log File: scrapers\logs\13_eMaryland_eMMA_IN_PROGRESS.log
+==============================
+[11:02:33] 2025-01-22 11:02:33,913 - INFO - \U0001f680 Bids Extraction Started for 13_eMaryland_eMMA
+[11:02:34] 2025-01-22 11:02:33,913 - INFO - Setting up Chrome WebDriver
+[11:02:34] 2025-01-22 11:02:33,913 - INFO - ====== WebDriver manager ======
