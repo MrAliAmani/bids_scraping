@@ -43,6 +43,9 @@ import keyboard
 import psutil
 from utils.utils import play_notification_sound
 
+# Number of scripts to run simultaneously
+MAX_CONCURRENT_SCRIPTS = 4  # Adjust this value to control how many scripts run at once
+
 # Environment Configuration
 PYTHON_PATH = r"C:\Users\AliAmani\Miniconda3\envs\bids\python.exe"  # Path to Python executable
 CONDA_PATH = r"C:\Users\AliAmani\Miniconda3"  # Path to Miniconda installation
@@ -84,7 +87,10 @@ SCRIPT_ORDER = [
     "scrapers/09_CGIEVA.py",
     "scrapers/10_BidBuysIllinoise.py",
     "scrapers/11_PlanetBids_Hartford.py",
-    "scrapers/12_Bonfire_FairfaxCounty.py",
+    "scrapers/12_Bonfire_FairfaxCounty_1.py",
+    "scrapers/12_Bonfire_FairfaxCounty_2.py",
+    "scrapers/12_Bonfire_FairfaxCounty_3.py",
+    "scrapers/12_Bonfire_FairfaxCounty_4.py",
     "scrapers/13_eMaryland_eMMA.py",
     "scrapers/14_NorthCarolina_VendorPortal_eVP.py",
     "scrapers/15_State_of_Conneticut_BidBoard.py",
@@ -156,7 +162,10 @@ scripts = [
     "scrapers/09_CGIEVA.py",
     "scrapers/10_BidBuysIllinoise.py",
     "scrapers/11_PlanetBids_Hartford.py",
-    "scrapers/12_Bonfire_FairfaxCounty.py",
+    "scrapers/12_Bonfire_FairfaxCounty_1.py",
+    "scrapers/12_Bonfire_FairfaxCounty_2.py",
+    "scrapers/12_Bonfire_FairfaxCounty_3.py",
+    "scrapers/12_Bonfire_FairfaxCounty_4.py",
     "scrapers/13_eMaryland_eMMA.py",
     "scrapers/14_NorthCarolina_VendorPortal_eVP.py",
     "scrapers/15_State_of_Conneticut_BidBoard.py",
@@ -169,7 +178,7 @@ scripts = [
 
 # Initialize script management
 script_queue = queue.Queue()
-script_semaphore = threading.Semaphore(8)  # Limit to 8 concurrent scripts
+script_semaphore = threading.Semaphore(MAX_CONCURRENT_SCRIPTS)  # Use MAX_CONCURRENT_SCRIPTS instead of hardcoded 8
 terminate_flag = threading.Event()
 
 # Initialize script infos at startup
@@ -785,8 +794,8 @@ def process_all_excel_files():
 
 def start_initial_batch():
     try:
-        # Start up to 8 scripts initially
-        for _ in range(8):
+        # Start up to MAX_CONCURRENT_SCRIPTS scripts initially
+        for _ in range(MAX_CONCURRENT_SCRIPTS):
             # Get next script that hasn't been started
             remaining_scripts = [s for s in SCRIPT_ORDER if s not in auto_started_scripts]
             if not remaining_scripts or terminate_flag.is_set():
@@ -989,8 +998,8 @@ def create_app():
     # Start initial batch of scripts
     def start_initial_batch():
         try:
-            # Start up to 8 scripts initially
-            for _ in range(8):
+            # Start up to MAX_CONCURRENT_SCRIPTS scripts initially
+            for _ in range(MAX_CONCURRENT_SCRIPTS):
                 # Get next script that hasn't been started
                 remaining_scripts = [s for s in SCRIPT_ORDER if s not in auto_started_scripts]
                 if not remaining_scripts or terminate_flag.is_set():

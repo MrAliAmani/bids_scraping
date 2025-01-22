@@ -60,20 +60,6 @@ if not os.getenv("FAIRFAX_EMAIL") or not os.getenv("FAIRFAX_PASSWORD"):
 
 # Add this list of URLs at the beginning of the script, after the imports
 BONFIRE_URLS = [
-    "https://mtc.bonfirehub.com/portal/?tab=openOpportunities",
-    "https://adacounty.bonfirehub.com/portal/?tab=openOpportunities",
-    "https://aps.bonfirehub.com/portal/?tab=openOpportunities",
-    "https://brazoriacounty.bonfirehub.com/portal/?tab=openOpportunities",
-    "https://bridgew.bonfirehub.com/portal/?tab=openOpportunities",
-    "https://brucecounty.bonfirehub.ca/portal/?tab=openOpportunities",
-    "https://buffaloschools.bonfirehub.com/portal/?tab=openOpportunities",
-    "https://burlesontx.bonfirehub.com/portal/?tab=openOpportunities",
-    "https://cabq.bonfirehub.com/portal/?tab=openOpportunities",
-    "https://cayman.bonfirehub.com/portal/?tab=openOpportunities",
-    "https://ccsd.bonfirehub.com/portal/?tab=openOpportunities",
-    "https://cityofalpharetta.bonfirehub.com/portal/?tab=openOpportunities",
-    "https://coloradospringsgov.bonfirehub.com/portal/?tab=openOpportunities",
-    "https://columbiacountyga.bonfirehub.com/portal/?tab=openOpportunities",
     "https://columbus.bonfirehub.com/opportunities/19900",
     "https://co-newton-ga.bonfirehub.com/portal/?tab=openOpportunities",
     "https://countymilwaukee.bonfirehub.com/portal",
@@ -81,16 +67,10 @@ BONFIRE_URLS = [
     "https://dallascityhall.bonfirehub.com/portal/?tab=openOpportunities",
     "https://ncsu.bonfirehub.com/portal/?tab=openOpportunities",
     "https://bjwsa.bonfirehub.com/portal/?tab=openOpportunities",
-    "https://cityofmilwaukee.bonfirehub.com/portal/?tab=openOpportunities",
-    "https://utrgv.bonfirehub.com/portal/?tab=openOpportunities",
-    "https://fortbendisd.bonfirehub.com/portal/?tab=openOpportunities",
-    "https://tuhsd.bonfirehub.com/portal/?tab=openOpportunities",
-    "https://npc.bonfirehub.com/portal/?tab=openOpportunities",
-    "https://fairfaxcounty.bonfirehub.com/portal/?tab=openOpportunities",
 ]
 
 # Update the script_name variable
-script_name = "12_BonfireSites"
+script_name = os.path.splitext(os.path.basename(__file__))[0]
 
 # Parse command-line arguments
 parser = argparse.ArgumentParser(description="Scrape Bonfire FairfaxCounty bids.")
@@ -764,7 +744,8 @@ def load_bid_cache():
 
 def save_bid_cache(cache):
     """Save the bid cache to JSON file."""
-    cache_file = Path("cache/bonfire_bids_cache.json")
+    script_name = os.path.splitext(os.path.basename(__file__))[0]
+    cache_file = Path(f"cache/{script_name}.json")
     try:
         # Convert datetime objects to strings for JSON serialization
         serializable_cache = {}

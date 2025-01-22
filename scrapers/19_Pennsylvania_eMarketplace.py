@@ -119,17 +119,10 @@ def get_base_folder():
 def setup_logger():
 	"""Set up logging configuration"""
 	try:
-		base_folder = get_base_folder()
-		if not os.path.exists(base_folder):
-			os.makedirs(base_folder)
-			
-		log_file = os.path.join(base_folder, '19_Pennsylvania_eMarketplace.log')
-		
 		logging.basicConfig(
 			level=logging.INFO,
 			format='%(asctime)s - %(levelname)s - %(message)s',
 			handlers=[
-				logging.FileHandler(log_file, encoding='utf-8'),
 				logging.StreamHandler()
 			]
 		)
@@ -331,17 +324,39 @@ def scrape_pennsylvania_emarketplace(driver, days_back=1):
 		else:
 			handle_error("Could not find search button")
 			return False
+
+		# Check if no records were found
+		no_records_script = """
+			const selector = '#ctl00_MainBody_grdResults > tbody > tr > td';
+			const noRecordsText = "No records were found matching the selected criteria";
+			const element = document.querySelector(selector);
+			return element && element.textContent.includes(noRecordsText);
+		"""
+		no_records_found = driver.execute_script(no_records_script)
+		
+		if no_records_found:
+			print(f"\nNo bids found for date: {yesterday}")
+			logger.info(f"[INFO] No bids found for date: {yesterday}")
+			complete_scraping()  # Mark as complete since we checked successfully
+			return True
 			
-		# Click Solicitation Start Date to sort
-		sort_link = wait_for_element(driver, By.XPATH, "//a[contains(@href, 'Sort$BidStartDate')]")
-		if sort_link:
+		# Only continue with sorting and processing if we found bids
+		try:
+			# Click Solicitation Start Date to sort
+			sort_link = wait_for_element(driver, By.XPATH, "//a[contains(@href, 'Sort$BidStartDate')]")
+			if not sort_link:
+				print("Could not find sort link - no bids may be present")
+				logger.info("[INFO] Could not find sort link - no bids may be present")
+				complete_scraping()
+				return True
+				
 			sort_link.click()
 			if not wait_for_page_load(driver):
 				handle_error("Page failed to load after sorting")
 				return False
 			print("Sorted by Solicitation Start Date")
-		else:
-			handle_error("Could not find sort link")
+		except Exception as e:
+			logger.error(f"[ERROR] Error sorting bids: {str(e)}")
 			return False
 			
 		# Set results to show ALL

@@ -18,6 +18,56 @@
    ```bash
    conda activate bids
    ```
+4. Install essential packages:
+   ```bash
+   # Web scraping essentials
+   pip install selenium==4.25.0
+   pip install selenium-stealth==1.0.6
+   pip install undetected-chromedriver==3.5.5
+   pip install webdriver-manager==4.0.2
+   pip install beautifulsoup4==4.12.3
+   pip install fake-useragent==1.5.1
+
+   # Data processing
+   pip install numpy==1.24.3
+   pip install pandas==2.2.3
+   pip install openpyxl==3.1.5
+   pip install lxml==5.3.0
+
+   # Web framework and sockets
+   pip install flask==3.1.0
+   pip install flask-socketio==5.4.1
+   pip install python-socketio==5.11.4
+   pip install python-engineio==4.10.1
+
+   # Storage and file handling
+   pip install minio==7.2.10
+   pip install boto3==1.35.54
+   pip install watchdog==6.0.0
+
+   # UI automation and monitoring
+   pip install pyautogui==0.9.54
+   pip install pynput==1.7.7
+   pip install keyboard==0.13.5
+   pip install psutil==6.1.0
+
+   # Utilities
+   pip install python-dotenv==1.0.1
+   pip install requests==2.32.3
+   pip install fuzzywuzzy==0.18.0
+   pip install python-Levenshtein==0.26.0
+   pip install rich==13.9.2
+
+   # Testing
+   pip install pytest==8.3.3
+   pip install pytest-mock==3.14.0
+   ```
+
+5. Install spaCy and its model:
+   ```bash
+   pip install spacy==3.8.2
+   python -m spacy download en_core_web_sm
+   ```
 
 ## 3. Configure Paths
 1. Find your Shadow PC username:

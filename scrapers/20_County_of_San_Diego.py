@@ -107,17 +107,10 @@ def get_base_folder():
 def setup_logger():
 	"""Set up logging configuration"""
 	try:
-		base_folder = get_base_folder()
-		if not os.path.exists(base_folder):
-			os.makedirs(base_folder)
-			
-		log_file = os.path.join(base_folder, '20_County_of_San_Diego.log')
-		
 		logging.basicConfig(
 			level=logging.INFO,
 			format='%(asctime)s - %(levelname)s - %(message)s',
 			handlers=[
-				logging.FileHandler(log_file, encoding='utf-8'),
 				logging.StreamHandler()
 			]
 		)
