@@ -32,11 +32,77 @@ from rich.table import Table
 from rich.panel import Panel
 from rich.live import Live
 from rich.logging import RichHandler
+from typing import Tuple
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
-# Specify the path to your Python interpreter
-PYTHON_PATH = r"C:\Users\AliAmani\Miniconda3\envs\bids\python.exe"
+# Add this class definition before it's used
+class ScriptStatus(Enum):
+    PENDING = "Pending"
+    RUNNING = "Running"
+    SUCCESS = "Done"
+    ERROR = "Done"
+
+# Environment Configuration
+PYTHON_PATH = r"C:\Users\AliAmani\Miniconda3\envs\bids\python.exe"  # Path to Python executable
+CONDA_PATH = r"C:\Users\AliAmani\Miniconda3"  # Path to Miniconda installation
+CONDA_ENV = "bids"  # Conda environment name
+CONDA_ENV_PATH = r"C:\Users\AliAmani\Miniconda3\envs\bids"  # Path to Conda environment
+
+# Script Configuration
+MAX_CONCURRENT_SCRIPTS = 4  # Number of scripts to run simultaneously
+UPLOAD_SCRIPT = "upload_bids.py"  # Script for uploading data
+
+# Script Order and Lists
+SCRIPT_ORDER = [
+    "scrapers/01_BuySpeed_01.py",
+    "scrapers/01_BuySpeed_02.py",
+    "scrapers/02_NYC.py",
+    "scrapers/03_TXSMartBuy.py",
+    "scrapers/05_NYSCR.py",
+    "scrapers/06_MyFloridaMarketPlace.py",
+    "scrapers/07_StateOfGeorgia.py",
+    "scrapers/08_SFCityPartner.py",
+    "scrapers/09_CGIEVA.py",
+    "scrapers/10_BidBuysIllinoise.py",
+    "scrapers/11_PlanetBids_Hartford.py",
+    "scrapers/12_Bonfire_FairfaxCounty_1.py",
+    "scrapers/12_Bonfire_FairfaxCounty_2.py",
+    "scrapers/12_Bonfire_FairfaxCounty_3.py",
+    "scrapers/12_Bonfire_FairfaxCounty_4.py",
+    "scrapers/13_eMaryland_eMMA.py",
+    "scrapers/14_NorthCarolina_VendorPortal_eVP.py",
+    "scrapers/15_State_of_Conneticut_BidBoard.py",
+    "scrapers/16_CalProcure.py",
+    "scrapers/17_BidNet.py",
+    "scrapers/18_Ionwave.py",
+    "scrapers/19_Pennsylvania_eMarketplace.py",
+    "scrapers/20_County_of_San_Diego.py",
+]
+
+scripts = SCRIPT_ORDER.copy()  # Create a copy of script order for the scripts list
+
+# Global Variables
+yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+terminate_flag = threading.Event()
+script_queue = queue.Queue()
+print_lock = threading.Lock()
+running_processes = {}  # Dictionary to keep track of running processes
+auto_started_scripts = set()  # Track scripts that have been started
+active_scripts = set()  # Track currently running scripts
+active_scripts_lock = threading.Lock()
+script_semaphore = threading.Semaphore(MAX_CONCURRENT_SCRIPTS)
+script_progress = None
+main_log_buffer = []  # Store main terminal logs
+processed_excel_folders = set()  # Track which folders have been processed
+processed_scripts = set()  # Track which scripts have been fully completed
+
+# Initialize script queue at startup
+for script in scripts:
+    script_queue.put(script)
+
+# Initialize script statuses
+script_statuses = {script: ScriptStatus.PENDING for script in scripts}
 
 # Add this near the top of the file, after other global variables
 UPLOAD_SCRIPT = (
@@ -56,7 +122,10 @@ scripts = [
     "scrapers/09_CGIEVA.py",
     "scrapers/10_BidBuysIllinoise.py",
     "scrapers/11_PlanetBids_Hartford.py",
-    "scrapers/12_Bonfire_FairfaxCounty.py",
+    "scrapers/12_Bonfire_FairfaxCounty_1.py",
+    "scrapers/12_Bonfire_FairfaxCounty_2.py",
+    "scrapers/12_Bonfire_FairfaxCounty_3.py",
+    "scrapers/12_Bonfire_FairfaxCounty_4.py",
     "scrapers/13_eMaryland_eMMA.py",
     "scrapers/14_NorthCarolina_VendorPortal_eVP.py",
     "scrapers/15_State_of_Conneticut_BidBoard.py",
@@ -85,18 +154,123 @@ running_processes = {}
 max_concurrent_scripts = 4
 script_semaphore = threading.Semaphore(max_concurrent_scripts)
 
-
-# Add these after other global variables
-class ScriptStatus(Enum):
-    PENDING = "Pending"
-    RUNNING = "Running"
-    SUCCESS = "Done"
-    ERROR = "Done"
-
-
 # Dictionary to track script statuses
 script_statuses = {script: ScriptStatus.PENDING for script in scripts}
 
+# Add near the top with other global variables
+auto_started_scripts = set()  # Track scripts that have been started
+
+# Move helper functions to the top, after imports and before global variables
+def all_scripts_completed() -> bool:
+    """Check if all scripts have completed (either success or error) or been terminated"""
+    for script in scripts:
+        # Skip scripts that were never started if we're terminating
+        if terminate_flag.is_set() and script not in auto_started_scripts:
+            continue
+            
+        # Check if script has been fully processed
+        if script not in processed_scripts:
+            return False
+                
+    return True
+
+def check_and_start_processing():
+    """Check if all scripts are done and start Excel processing and uploads"""
+    try:
+        # Double check we should start processing
+        if not all_scripts_completed():
+            return
+            
+        print("\n🔄 Starting batch processing...")
+        
+        # Get yesterday's date folder
+        yesterday_folder = os.path.join(os.getcwd(), yesterday)
+        
+        if not os.path.exists(yesterday_folder):
+            print(f"❌ Yesterday's folder not found: {yesterday_folder}")
+            return
+            
+        # Find all COMPLETED folders that haven't been processed yet
+        completed_folders = []
+        for root, dirs, files in os.walk(yesterday_folder):
+            for dir_name in dirs:
+                folder_path = os.path.join(root, dir_name)
+                if dir_name.endswith('_COMPLETED') and folder_path not in processed_excel_folders:
+                    completed_folders.append(folder_path)
+        
+        if not completed_folders:
+            print("No new COMPLETED folders to process")
+            return
+            
+        print(f"Found {len(completed_folders)} new COMPLETED folders")
+        
+        # Process all Excel files first
+        print("\n📊 Processing all Excel files...")
+        for folder in completed_folders:
+            if folder in processed_excel_folders:
+                print(f"Skipping already processed folder: {folder}")
+                continue
+                
+            if process_excel_files(folder):
+                print(f"✅ Successfully processed Excel files in {folder}")
+                processed_excel_folders.add(folder)  # Mark as processed
+            else:
+                print(f"❌ Failed to process Excel files in {folder}")
+        
+        # Then do uploads for all processed folders
+        print("\n📤 Starting uploads for all processed folders...")
+        for folder in processed_excel_folders:  # Use processed_excel_folders instead of completed_folders
+            try:
+                # Upload directly without re-processing
+                success, message = upload_data(folder)
+                if success:
+                    print(f"✅ Successfully uploaded {folder}")
+                else:
+                    print(f"❌ Failed to upload {folder}: {message}")
+            except Exception as e:
+                print(f"❌ Error uploading {folder}: {str(e)}")
+        
+        print("\n🎉 All processing complete!")
+        
+    except Exception as e:
+        print(f"❌ Error in batch processing: {str(e)}")
+
+def start_next_script():
+    """Start the next pending script that hasn't been run yet"""
+    try:
+        # Get list of pending scripts that haven't been started or completed
+        pending_scripts = [
+            script for script, status in script_statuses.items()
+            if status == ScriptStatus.PENDING 
+            and script not in auto_started_scripts
+            and script not in processed_scripts
+        ]
+        
+        # Count currently running scripts
+        running_count = len([
+            script for script, status in script_statuses.items()
+            if status == ScriptStatus.RUNNING
+        ])
+        
+        # Start next script if we have pending scripts and room to run more
+        if pending_scripts and running_count < max_concurrent_scripts and not terminate_flag.is_set():
+            next_script = pending_scripts[0]
+            script_statuses[next_script] = ScriptStatus.RUNNING  # Mark as running before starting
+            auto_started_scripts.add(next_script)  # Track that we've started this script
+            thread = threading.Thread(target=run_script, args=(next_script,))
+            thread.daemon = True
+            thread.start()
+            return True
+            
+        # If no more pending scripts to start, check if we should start processing
+        elif not pending_scripts and all_scripts_completed():
+            print("\n✅ All scripts have been run. Starting batch processing...")
+            check_and_start_processing()
+            
+        return False
+    except Exception as e:
+        print(f"Error starting next script: {e}")
+        return False
 
 # Function to close CMD window
 def close_cmd_window(hwnd):
@@ -413,81 +587,23 @@ def process_excel_files(completed_folder_path: str) -> bool:
         return False
 
 
-def upload_data(completed_folder_path):
-    """Upload Excel file and bid attachments to the server"""
+def upload_data(folder_path: str) -> Tuple[bool, str]:
+    """Upload data from a folder without re-processing Excel files"""
     try:
-        # First verify the folder exists and has content
-        if not os.path.exists(completed_folder_path):
-            return False, f"Folder not found: {completed_folder_path}"
-
-        # Check if folder has any contents
-        contents = os.listdir(completed_folder_path)
-        if not contents:
-            return False, f"Folder is empty: {completed_folder_path}"
-
-        print(f"Found {len(contents)} items in {completed_folder_path}")
-
-        # Process Excel files before upload
-        print("\n🔄 Processing Excel files before upload...")
-        if not process_excel_files(completed_folder_path):
-            return False, "Failed to process Excel files - upload cancelled"
-        print("✅ Excel processing completed successfully")
-
-        # Set up environment for proper encoding
-        env = os.environ.copy()
-        env["PYTHONIOENCODING"] = "utf-8"
-        env["PYTHONLEGACYWINDOWSSTDIO"] = "utf-8"
-
-        # Run upload_bids.py with the specified folder
-        cmd = [sys.executable, UPLOAD_SCRIPT, completed_folder_path]
-        print(f"Running upload command: {' '.join(cmd)}")
-
-        # Run the upload process with full output capture
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-
-        upload_process = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            env=env,
-            startupinfo=startupinfo,
-            shell=False,
-            cwd=os.path.dirname(os.path.abspath(__file__)),
-        )
-
-        # Always log the output for debugging
-        if upload_process.stdout:
-            print("Upload output:")
-            print(upload_process.stdout)
-        if upload_process.stderr:
-            print("Upload errors:")
-            print(upload_process.stderr)
-        print(f"Upload return code: {upload_process.returncode}")
-
-        if upload_process.returncode == 0:
-            # Only remove the folder after successful upload
-            try:
-                shutil.rmtree(completed_folder_path)
-                print(
-                    f"🗑️ Removed completed folder after successful upload: {completed_folder_path}"
-                )
-            except Exception as e:
-                print(f"⚠️ Warning: Could not remove folder after upload: {e}")
+        # Check if folder exists
+        if not os.path.exists(folder_path):
+            return False, f"Folder not found: {folder_path}"
+            
+        # Upload the folder contents directly
+        upload_cmd = [PYTHON_PATH, UPLOAD_SCRIPT, folder_path]
+        result = subprocess.run(upload_cmd, check=True)
+        
+        if result.returncode == 0:
             return True, "Upload successful"
         else:
-            error_msg = (
-                upload_process.stderr or upload_process.stdout or "Unknown error"
-            )
-            return (
-                False,
-                f"Upload failed (code {upload_process.returncode}): {error_msg}",
-            )
-
+            return False, f"Upload failed with return code {result.returncode}"
+            
     except Exception as e:
-        print(f"Exception during upload: {str(e)}")
         return False, f"Upload error: {str(e)}"
 
 
@@ -587,6 +703,15 @@ def run_script(script_name):
     if terminate_flag.is_set():
         return
 
+    # Skip if script has already been run
+    if script_name in processed_scripts:
+        print(f"Skipping {script_name} - already completed")
+        return
+        
+    if script_name in auto_started_scripts and script_statuses[script_name] != ScriptStatus.RUNNING:
+        print(f"Skipping {script_name} - already started")
+        return
+
     with script_semaphore:
         start_time = datetime.now()
         script_progress.add_script(script_name)
@@ -596,9 +721,7 @@ def run_script(script_name):
 
         with print_lock:
             script_statuses[script_name] = ScriptStatus.RUNNING
-            console.print(
-                f"\n[bold cyan]Starting {script_name} at {start_time}[/bold cyan]"
-            )
+            console.print(f"\n[bold cyan]Starting {script_name} at {start_time}[/bold cyan]")
 
         try:
             window_title = f"Scraper - {os.path.basename(script_name)}"
@@ -718,23 +841,13 @@ def run_script(script_name):
                     print(f"Script {script_name} completed successfully")
                     print(f"{'='*50}")
                     script_statuses[script_name] = ScriptStatus.SUCCESS
-                    
-                    # Look for and upload COMPLETED folder immediately
-                    script_base = os.path.splitext(os.path.basename(script_name))[0]
-                    completed_folder = os.path.join(yesterday, f"{script_base}_COMPLETED")
-                    if os.path.exists(completed_folder):
-                        success, message = upload_data(completed_folder)
-                        if success:
-                            print(f"✅ Successfully uploaded {completed_folder}")
-                        else:
-                            print(f"❌ Failed to upload {completed_folder}: {message}")
-                    
-                    # Start next script
+                    processed_scripts.add(script_name)  # Mark as fully completed
                     start_next_script()
                 else:
                     print(f"\nScript {script_name} failed with return code {return_code}")
                     script_statuses[script_name] = ScriptStatus.ERROR
-                    start_next_script()  # Still try to start next script
+                    processed_scripts.add(script_name)  # Mark as completed even if failed
+                    start_next_script()
 
                 print_status_report()
 
@@ -742,24 +855,32 @@ def run_script(script_name):
             with print_lock:
                 console.print(f"[bold red]Error running {script_name}: {str(e)}[/bold red]")
                 script_statuses[script_name] = ScriptStatus.ERROR
+                processed_scripts.add(script_name)  # Mark as completed on error
                 print_status_report()
-                start_next_script()  # Try to start next script even after error
+                start_next_script()
 
         finally:
             if script_name in running_processes:
                 del running_processes[script_name]
             
-            # Mark script as completed and update stats
+            # Update completion stats
             if script_statuses[script_name] in [ScriptStatus.RUNNING, ScriptStatus.PENDING]:
                 script_statuses[script_name] = ScriptStatus.SUCCESS
                 processing_stats.completed_scripts += 1
                 processing_stats.log_progress()
             
-            # Check if we should start Excel processing
-            if should_start_excel_processing():
-                check_and_start_excel_processing()
-            # Otherwise start next script if not stopping all
-            elif not terminate_flag.is_set():
+            # Check if all scripts are either completed or terminated
+            remaining_scripts = [
+                script for script, status in script_statuses.items()
+                if status not in [ScriptStatus.SUCCESS, ScriptStatus.ERROR]
+                and script not in auto_started_scripts
+            ]
+            
+            if not remaining_scripts:  # No more scripts to run
+                print("\n✅ All scripts have completed or been terminated")
+                print("Starting batch processing...")
+                check_and_start_processing()
+            elif not terminate_flag.is_set():  # Still have scripts to run
                 start_next_script()
 
 
@@ -791,53 +912,34 @@ def close_script_window(window_title):
         print(f"Error closing window {window_title}: {e}")
 
 
-def start_next_script():
-    """Start the next pending script"""
-    try:
-        # Get list of pending scripts
-        pending_scripts = [
-            script for script, status in script_statuses.items()
-            if status == ScriptStatus.PENDING
-        ]
-        
-        # Count currently running scripts
-        running_count = len([
-            script for script, status in script_statuses.items()
-            if status == ScriptStatus.RUNNING
-        ])
-        
-        # Start next script if we have pending scripts and room to run more
-        if pending_scripts and running_count < max_concurrent_scripts and not terminate_flag.is_set():
-            next_script = pending_scripts[0]
-            script_statuses[next_script] = ScriptStatus.RUNNING  # Mark as running before starting
-            thread = threading.Thread(target=run_script, args=(next_script,))
-            thread.daemon = True
-            thread.start()
-            return True
-            
-        return False
-    except Exception as e:
-        print(f"Error starting next script: {e}")
-        return False
-
-
 def terminate_scripts():
-    terminate_flag.set()
-
-    # Terminate all running processes
-    for script_name, process in list(running_processes.items()):
-        print(f"Terminating {script_name}")
-        if sys.platform == "win32":
-            subprocess.call(["taskkill", "/F", "/T", "/PID", str(process.pid)])
-        else:
-            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-
-    # Clear the script queue
-    while not script_queue.empty():
-        script_queue.get()
-
-    # Clean up any remaining windows
-    cleanup_windows()
+    """Stop all scripts and start processing"""
+    try:
+        print("Stopping all scripts...")
+        
+        # Set terminate flag to prevent new scripts
+        terminate_flag.set()
+        
+        # Stop all running processes
+        for script_name, process in list(running_processes.items()):
+            print(f"Stopping script: {script_name}")
+            try:
+                process.terminate()
+                process.wait(timeout=5)
+            except Exception as e:
+                print(f"Error stopping {script_name}: {e}")
+            
+            if script_name in running_processes:
+                del running_processes[script_name]
+                
+        print("All scripts stopped")
+        
+        # Start batch processing after all scripts are stopped
+        print("\n🔄 Starting batch processing of all completed folders...")
+        check_and_start_processing()
+        
+    except Exception as e:
+        print(f"Error stopping scripts: {str(e)}")
 
 
 def ctrl_d_handler():
@@ -1116,11 +1218,20 @@ def main():
                 if terminate_flag.is_set():
                     break
 
+            # Wait for any remaining scripts to finish
+            time.sleep(5)
+
+            # Only start processing after ALL scripts are done or terminated
             if terminate_flag.is_set():
                 console.print("[yellow]Script execution terminated by user.[/yellow]")
             else:
-                console.print("[green]All scripts completed[/green]")
+                console.print("[green]All scripts completed normally[/green]")
                 winsound.Beep(2000, 1000)
+
+            # Now start the batch processing
+            if all_scripts_completed() or terminate_flag.is_set():
+                print("\n🔄 Starting batch processing of all completed folders...")
+                check_and_start_processing()
 
             # Display final summary
             display_final_summary()
@@ -1135,30 +1246,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-# Add these helper functions near the top
-def all_scripts_completed() -> bool:
-    """Check if all scripts have completed (either success or error)"""
-    return all(status in [ScriptStatus.SUCCESS, ScriptStatus.ERROR] 
-              for status in script_statuses.values())
-
-def should_start_excel_processing() -> bool:
-    """Check if we should start Excel processing"""
-    return all_scripts_completed() and not terminate_flag.is_set()
-
-def check_and_start_excel_processing():
-    """Start Excel processing if all scripts are done"""
-    if should_start_excel_processing():
-        print("\n🔄 All scripts completed. Starting Excel processing...")
-        # Get yesterday's date folder
-        yesterday_folder = os.path.join(os.getcwd(), yesterday)
-        if os.path.exists(yesterday_folder):
-            completed_folders = glob.glob(os.path.join(yesterday_folder, "*_COMPLETED"))
-            for folder in completed_folders:
-                if process_excel_files(folder):
-                    print(f"✅ Successfully processed {folder}")
-                    success, message = upload_data(folder)
-                    if success:
-                        print(f"✅ Successfully uploaded {folder}")
-                    else:
-                        print(f"❌ Failed to upload {folder}: {message}")

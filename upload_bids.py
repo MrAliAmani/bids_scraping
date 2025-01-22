@@ -6,10 +6,23 @@ from botocore.exceptions import NoCredentialsError, ClientError
 import shutil
 import argparse
 import glob
+import pandas as pd
+import requests
+import json
+import logging
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+from rich.console import Console
 
 import io
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+console = Console()
 
 # MinIO/S3 Configuration
 AWS_ACCESS_KEY_ID = "minioadmin"  # Your MinIO access key
@@ -228,89 +241,191 @@ def cleanup_resources(folder_path: str) -> bool:
         return False
 
 
-def main():
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description="Upload files or folders to MinIO/S3")
-    parser.add_argument(
-        "path",
-        nargs="?",
-        default=None,
-        help="Path to date folder (defaults to yesterday's date folder)",
-    )
-    parser.add_argument(
-        "--backup",
-        action="store_true",
-        help="Create a backup copy instead of removing source files",
-    )
-    args = parser.parse_args()
-
-    # Use default path if none provided
-    if args.path is None:
-        args.path = get_default_path()
-
-    # Normalize the path to handle any path separators
-    args.path = os.path.normpath(args.path)
-
-    # Verify the path exists before proceeding
-    if not os.path.exists(args.path):
-        print(f"❌ Error: Path does not exist: {args.path}")
-        sys.exit(1)
-
-    # Calculate the target folder name (yesterday's date)
-    current_folder = str(datetime.now().date() - timedelta(days=1))
-    s3_folder = f"State/attachments/{current_folder}"
-
-    # Initialize S3 client
-    s3_client = boto3.client(
-        "s3",
-        aws_access_key_id=AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-        region_name=AWS_DEFAULT_REGION,
-        endpoint_url="http://localhost:9000",
-    )
-
-    # Enable versioning on the bucket
-    enable_versioning(s3_client, AWS_BUCKET_NAME)
-
-    print(f"Processing: {args.path}")
-    success = upload_to_s3(s3_client, args.path, AWS_BUCKET_NAME, s3_folder)
-
-    # Remove empty folders after upload
-    print("Cleaning up empty folders...")
-    remove_empty_folders(s3_client, AWS_BUCKET_NAME, s3_folder)
-
-    # Handle backup if requested and upload was successful
-    if success and args.backup and os.path.isdir(args.path):
-        try:
-            backup_path = (
-                f"{args.path}_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-            )
-            shutil.copytree(args.path, backup_path)
-            print(f"📁 Created backup at: {backup_path}")
-        except Exception as e:
-            print(f"⚠️ Warning: Could not create backup of {args.path}: {e}")
-
-    if success:
-        if args.backup:
-            try:
-                # Create backup before cleanup
-                backup_path = f"{args.path}_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                shutil.copytree(args.path, backup_path)
-                print(f"📁 Created backup at: {backup_path}")
-            except Exception as e:
-                print(f"⚠️ Warning: Could not create backup of {args.path}: {e}")
+class BidsUploader:
+    def __init__(self):
+        self.api_endpoint = "https://bidsportal.com/api/uploadBids"
+        self.headers = {
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
         
-        # Clean up resources after successful upload
-        if cleanup_resources(args.path):
-            print("✅ Resources cleaned up successfully")
-        else:
-            print("⚠️ Warning: Some resources could not be cleaned up")
+    def clean_data(self, value) -> str:
+        """Clean data by handling NaN values and converting to string"""
+        if pd.isna(value) or value is None:
+            return ""
+        return str(value).strip()
+        
+    def upload_bid(self, bid_data: Dict) -> bool:
+        """Upload a single bid to the API"""
+        try:
+            # Clean the data before sending
+            cleaned_data = {
+                key: self.clean_data(value)
+                for key, value in bid_data.items()
+            }
             
-        print("✅ Upload process completed successfully")
-    else:
-        print("❌ Upload process completed with errors")
-        sys.exit(1)
+            response = requests.post(
+                self.api_endpoint,
+                json=cleaned_data,
+                headers=self.headers,
+                verify=False
+            )
+            response.raise_for_status()
+            return True
+        except Exception as e:
+            logger.error(f"Error uploading bid: {str(e)}")
+            return False
 
+    def process_excel_file(self, excel_path: str) -> bool:
+        """Process and upload bids from a single Excel file"""
+        try:
+            # Read Excel file
+            df = pd.read_excel(excel_path)
+            
+            if df.empty:
+                logger.warning(f"Empty Excel file: {excel_path}")
+                return False
+                
+            # Check for required API columns
+            required_columns = ['API_Category', 'API_Category_ID', 'API_Notice_Type', 'API_Agency', 'API_State']
+            if not all(col in df.columns for col in required_columns):
+                logger.error(f"Missing required API columns in {excel_path}")
+                return False
+                
+            total_rows = len(df)
+            successful_uploads = 0
+            
+            # Process each row
+            for index, row in df.iterrows():
+                try:
+                    # Calculate progress
+                    progress = int(((index + 1) / total_rows) * 100)
+                    print(f"\rUploading bid {index + 1}/{total_rows} ({progress}%)", end='')
+                    
+                    # Prepare bid data
+                    bid_data = {
+                        "title": row.get('Title') or row.get('Solicitation Title', ''),
+                        "description": row.get('Description', ''),
+                        "category": row.get('API_Category'),
+                        "category_id": row.get('API_Category_ID'),
+                        "notice_type": row.get('API_Notice_Type'),
+                        "agency": row.get('API_Agency'),
+                        "state": row.get('API_State'),
+                        "bid_url": row.get('Bid Detail Page URL', ''),
+                        "bid_number": row.get('Bid Number', ''),
+                        "posted_date": row.get('Posted Date', ''),
+                        "submission_date": row.get('Submission Date', '')
+                    }
+                    
+                    # Upload bid
+                    if self.upload_bid(bid_data):
+                        successful_uploads += 1
+                    
+                except Exception as e:
+                    logger.error(f"Error processing row {index + 1}: {str(e)}")
+                    continue
+                    
+            print(f"\n✅ Uploaded {successful_uploads}/{total_rows} bids from {Path(excel_path).name}")
+            return successful_uploads > 0
+            
+        except Exception as e:
+            logger.error(f"Error processing file {excel_path}: {str(e)}")
+            return False
+
+def upload_data(folder_path: str) -> Tuple[bool, str]:
+    """Upload data to S3 using MinIO"""
+    try:
+        # Initialize S3 client
+        s3_client = boto3.client(
+            "s3",
+            aws_access_key_id=AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+            region_name=AWS_DEFAULT_REGION,
+            endpoint_url=AWS_ENDPOINT_URL,
+        )
+
+        # Calculate the target folder name (yesterday's date)
+        current_folder = str(datetime.now().date() - timedelta(days=1))
+        s3_folder = f"State/attachments/{current_folder}"
+
+        # Enable versioning on the bucket
+        enable_versioning(s3_client, AWS_BUCKET_NAME)
+
+        # Upload files
+        success = upload_to_s3(s3_client, folder_path, AWS_BUCKET_NAME, s3_folder)
+
+        # Remove empty folders after upload
+        print("Cleaning up empty folders...")
+        remove_empty_folders(s3_client, AWS_BUCKET_NAME, s3_folder)
+
+        if success:
+            # Clean up resources after successful upload
+            if cleanup_resources(folder_path):
+                return True, "Upload and cleanup successful"
+            else:
+                return False, "Upload successful but cleanup failed"
+        else:
+            return False, "Upload failed"
+
+    except Exception as e:
+        error_msg = f"Error during upload: {str(e)}"
+        print(f"❌ {error_msg}")
+        return False, error_msg
+
+def upload_bids_from_cli(base_path: str = None) -> bool:
+    """Upload bids from Excel files in yesterday's COMPLETED folders"""
+    try:
+        # Get yesterday's date folder
+        yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+        
+        if not base_path:
+            base_path = os.path.join(os.getcwd(), yesterday)
+        
+        if not os.path.exists(base_path):
+            print(f"❌ Yesterday's folder not found: {base_path}")
+            return False
+            
+        print(f"\nUploading bids from: {base_path}")
+
+        # Find all COMPLETED folders
+        success = True
+        folders_processed = 0
+        
+        if base_path.endswith('COMPLETED'):
+            # If specific COMPLETED folder provided
+            completed_folders = [base_path]
+        else:
+            # Find all COMPLETED folders in base path
+            completed_folders = []
+            for root, dirs, files in os.walk(base_path):
+                if root.endswith('COMPLETED'):
+                    completed_folders.append(root)
+
+        if not completed_folders:
+            print("No COMPLETED folders found")
+            return False
+
+        # Process each completed folder
+        for folder in completed_folders:
+            print(f"\n📁 Processing folder: {folder}")
+            upload_success, upload_message = upload_data(folder)
+            
+            if upload_success:
+                print(f"✅ Successfully processed: {folder}")
+                folders_processed += 1
+            else:
+                print(f"❌ Failed to process {folder}: {upload_message}")
+                success = False
+
+        print(f"\n🎉 Upload complete! Processed {folders_processed} folders")
+        return success
+
+    except Exception as e:
+        print(f"\n❌ Error during upload: {str(e)}")
+        return False
 
 if __name__ == "__main__":
-    main()
+    # Allow optional base path argument
+    base_path = sys.argv[1] if len(sys.argv) > 1 else None
+    success = upload_bids_from_cli(base_path)
+    sys.exit(0 if success else 1)

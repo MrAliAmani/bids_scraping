@@ -984,15 +984,26 @@ Example: {{"category_id": 123, "category_name": "Information Technology"}}"""
         except Exception as e:
             raise ValueError(f"Error parsing model response: {str(e)}")
 
-def process_excel_from_cli(excel_path: str) -> bool:
-    """Process a single Excel file from command line"""
+def process_excel_from_cli(base_path: str = None) -> bool:
+    """Process Excel files from yesterday's COMPLETED folders"""
     try:
-        print(f"\nProcessing Excel file: {excel_path}")
+        # Get yesterday's date folder
+        from datetime import datetime, timedelta
+        yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+        
+        if not base_path:
+            base_path = os.path.join(os.getcwd(), yesterday)
+        
+        if not os.path.exists(base_path):
+            print(f"❌ Yesterday's folder not found: {base_path}")
+            return False
+            
+        print(f"\nProcessing Excel files from: {base_path}")
         
         # Initialize processor
         processor = ExcelProcessor()
         
-        # Fetch API data
+        # Fetch API data once
         print("\n📥 Fetching API data...")
         processor.api_categories = processor.fetch_api_data("category")
         processor.api_notice_types = processor.fetch_api_data("notice")
@@ -1006,138 +1017,125 @@ def process_excel_from_cli(excel_path: str) -> bool:
             
         print("✅ API data fetched successfully")
 
-        # Prepare category embeddings
+        # Prepare category embeddings once
         print("🔄 Preparing category embeddings...")
         processor._prepare_embeddings()
         print("✅ Category embeddings prepared")
 
-        # Load Excel file
-        df = pd.read_excel(excel_path)
-        total_rows = len(df)
-        print(f"📊 Total rows to process: {total_rows}")
-
-        # Handle different title column names
-        title_column = 'Solicitation Title' if 'Solicitation Title' in df.columns else 'Title'
-        if title_column not in df.columns:
-            print("❌ No Title or Solicitation Title column found in Excel file")
-            return False
-
-        # Get column positions for inserting API columns
-        category_pos = df.columns.get_loc('Category') + 1 if 'Category' in df.columns else len(df.columns)
-        notice_pos = df.columns.get_loc('Notice Type') + 1 if 'Notice Type' in df.columns else len(df.columns)
-        agency_pos = df.columns.get_loc('Agency') + 1 if 'Agency' in df.columns else len(df.columns)
-        state_pos = df.columns.get_loc('State') + 1 if 'State' in df.columns else len(df.columns)
-
-        # Add API columns
-        if 'API_Category' not in df.columns:
-            df.insert(category_pos, 'API_Category', None)
-            df.insert(category_pos + 1, 'API_Category_ID', None)
-            print("Added API Category columns")
-        if 'API_Notice_Type' not in df.columns:
-            df.insert(notice_pos, 'API_Notice_Type', None)
-            print("Added API Notice Type column")
-        if 'API_Agency' not in df.columns:
-            df.insert(agency_pos, 'API_Agency', None)
-            print("Added API Agency column")
-        if 'API_State' not in df.columns:
-            df.insert(state_pos, 'API_State', None)
-            print("Added API State column")
-
-        # Process each row
-        for index, row in df.iterrows():
-            try:
-                # Calculate progress
-                progress = int(((index + 1) / total_rows) * 100)
-                print(f"\rProcessing row {index + 1}/{total_rows} ({progress}%)", end='')
-
-                # Get fields for matching
-                title = str(row.get(title_column, ''))
-                description = str(row.get('Description', ''))
-                original_category = str(row.get('Category', ''))
-                agency_name = str(row.get('Agency', ''))
-                bid_url = str(row.get('Bid Detail Page URL', ''))
-
-                # Match category
-                category_match = processor.find_best_category_match(
-                    title, description, original_category, processor.api_categories
-                )
-                if category_match and category_match[0]:
-                    df.at[index, 'API_Category'] = category_match[0]
-                    df.at[index, 'API_Category_ID'] = category_match[1]
-                    print(f"\r✅ Row {index + 1}: Category matched: {category_match[0]}")
-                else:
-                    print(f"\r📝 Row {index + 1}: No category match found")
-
-                # Match notice type
-                notice_type = processor.determine_notice_type(
-                    f"{title} {description}", processor.api_notice_types
-                )
-                if notice_type and notice_type[0]:
-                    df.at[index, 'API_Notice_Type'] = notice_type[0]
-                    print(f"  ✓ Notice Type: {notice_type[0]}")
-
-                # Match agency
-                agency_match = processor.find_best_agency_match(
-                    agency_name, bid_url, processor.api_agencies
-                )
-                if agency_match and agency_match[0]:
-                    df.at[index, 'API_Agency'] = agency_match[0]
-                    print(f"  ✓ Agency: {agency_match[0]}")
-
-                # Match state
-                state_match = processor.find_state_match(
-                    description, agency_name, bid_url, processor.api_states
-                )
-                if state_match and state_match[0]:
-                    df.at[index, 'API_State'] = state_match[0]
-                    print(f"  ✓ State: {state_match[0]}")
-
-            except Exception as e:
-                print(f"\n❌ Error processing row {index + 1}: {str(e)}")
-                continue
-
-        print("\n✅ Processing complete")
-
-        # Save processed file
-        try:
-            df.to_excel(excel_path, index=False)
-            print(f"\n✅ Saved processed file to: {excel_path}")
-            
-            # Verify the save
-            verification_df = pd.read_excel(excel_path)
-            api_columns = ['API_Category', 'API_Category_ID', 'API_Notice_Type', 'API_Agency', 'API_State']
-            if all(col in verification_df.columns for col in api_columns):
-                print("✅ Verified API columns were saved successfully")
-                # Print sample of processed data
-                print("\nSample of processed data:")
-                sample_row = verification_df.iloc[0]
-                for col in api_columns:
-                    if pd.notna(sample_row[col]):
-                        print(f"{col}: {sample_row[col]}")
-            else:
-                print("⚠️ Warning: Some API columns may not have been saved properly")
-            
-        except Exception as e:
-            print(f"\n❌ Error saving Excel file: {str(e)}")
-            return False
+        # Find all COMPLETED folders
+        success = True
+        excel_files_processed = 0
         
-        return True
+        for root, dirs, files in os.walk(base_path):
+            if root.endswith('COMPLETED'):
+                print(f"\n📁 Processing folder: {root}")
+                excel_files = [f for f in files if f.endswith('.xlsx')]
+                
+                if not excel_files:
+                    print("  No Excel files found in this COMPLETED folder")
+                    continue
+                    
+                for excel_file in excel_files:
+                    excel_path = os.path.join(root, excel_file)
+                    print(f"\n📊 Processing: {excel_file}")
+                    
+                    try:
+                        # Load Excel file
+                        df = pd.read_excel(excel_path)
+                        total_rows = len(df)
+                        print(f"📊 Total rows to process: {total_rows}")
+
+                        # Handle different title column names
+                        title_column = 'Solicitation Title' if 'Solicitation Title' in df.columns else 'Title'
+                        if title_column not in df.columns:
+                            print("❌ No Title or Solicitation Title column found")
+                            continue
+
+                        # Get column positions for inserting API columns
+                        category_pos = df.columns.get_loc('Category') + 1 if 'Category' in df.columns else len(df.columns)
+                        notice_pos = df.columns.get_loc('Notice Type') + 1 if 'Notice Type' in df.columns else len(df.columns)
+                        agency_pos = df.columns.get_loc('Agency') + 1 if 'Agency' in df.columns else len(df.columns)
+                        state_pos = df.columns.get_loc('State') + 1 if 'State' in df.columns else len(df.columns)
+
+                        # Add API columns
+                        if 'API_Category' not in df.columns:
+                            df.insert(category_pos, 'API_Category', None)
+                            df.insert(category_pos + 1, 'API_Category_ID', None)
+                        if 'API_Notice_Type' not in df.columns:
+                            df.insert(notice_pos, 'API_Notice_Type', None)
+                        if 'API_Agency' not in df.columns:
+                            df.insert(agency_pos, 'API_Agency', None)
+                        if 'API_State' not in df.columns:
+                            df.insert(state_pos, 'API_State', None)
+
+                        # Process each row
+                        for index, row in df.iterrows():
+                            try:
+                                # Calculate progress
+                                progress = int(((index + 1) / total_rows) * 100)
+                                print(f"\rProcessing row {index + 1}/{total_rows} ({progress}%)", end='')
+
+                                # Get fields for matching
+                                title = str(row.get(title_column, ''))
+                                description = str(row.get('Description', ''))
+                                original_category = str(row.get('Category', ''))
+                                agency_name = str(row.get('Agency', ''))
+                                bid_url = str(row.get('Bid Detail Page URL', ''))
+
+                                # Match category
+                                category_match = processor.find_best_category_match(
+                                    title, description, original_category, processor.api_categories
+                                )
+                                if category_match and category_match[0]:
+                                    df.at[index, 'API_Category'] = category_match[0]
+                                    df.at[index, 'API_Category_ID'] = category_match[1]
+
+                                # Match notice type
+                                notice_type = processor.determine_notice_type(
+                                    f"{title} {description}", processor.api_notice_types
+                                )
+                                if notice_type and notice_type[0]:
+                                    df.at[index, 'API_Notice_Type'] = notice_type[0]
+
+                                # Match agency
+                                agency_match = processor.find_best_agency_match(
+                                    agency_name, bid_url, processor.api_agencies
+                                )
+                                if agency_match and agency_match[0]:
+                                    df.at[index, 'API_Agency'] = agency_match[0]
+
+                                # Match state
+                                state_match = processor.find_state_match(
+                                    description, agency_name, bid_url, processor.api_states
+                                )
+                                if state_match and state_match[0]:
+                                    df.at[index, 'API_State'] = state_match[0]
+
+                            except Exception as e:
+                                print(f"\n❌ Error processing row {index + 1}: {str(e)}")
+                                continue
+
+                        # Save processed file
+                        df.to_excel(excel_path, index=False)
+                        print(f"\n✅ Saved processed file: {excel_file}")
+                        excel_files_processed += 1
+
+                    except Exception as e:
+                        print(f"\n❌ Error processing {excel_file}: {str(e)}")
+                        success = False
+                        continue
+
+        print(f"\n🎉 Processing complete! Processed {excel_files_processed} Excel files")
+        return success
 
     except Exception as e:
-        print(f"\n❌ Error processing Excel file: {str(e)}")
+        print(f"\n❌ Error during processing: {str(e)}")
         return False
 
 if __name__ == "__main__":
     import sys
     
-    if len(sys.argv) != 2:
-        print("Usage: python excel_processor.py <path_to_excel_file>")
-        sys.exit(1)
-        
-    excel_path = sys.argv[1]
-    if not os.path.exists(excel_path):
-        print(f"❌ Excel file not found: {excel_path}")
-        sys.exit(1)
-        
-    success = process_excel_from_cli(excel_path)
+    # Allow optional base path argument
+    base_path = sys.argv[1] if len(sys.argv) > 1 else None
+    success = process_excel_from_cli(base_path)
     sys.exit(0 if success else 1)
