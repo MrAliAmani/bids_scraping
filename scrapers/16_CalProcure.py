@@ -1,5 +1,6 @@
 import os
 import sys
+import shutil
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -1009,6 +1010,14 @@ class CalProcureScraper:
             if hasattr(self, "driver"):
                 self.driver.quit()
                 print("🌐 Browser closed successfully")
+
+            # Clean up temporary download folder before renaming
+            try:
+                if hasattr(self, "temp_download_folder") and os.path.exists(self.temp_download_folder):
+                    shutil.rmtree(self.temp_download_folder, ignore_errors=True)
+                    print(f"✅ Removed temporary download folder: {self.temp_download_folder}")
+            except Exception as e:
+                print(f"⚠️ Error removing temporary folder: {str(e)}")
 
             # Rename script folder to COMPLETED if everything was successful
             if hasattr(self, "script_folder") and os.path.exists(self.script_folder):

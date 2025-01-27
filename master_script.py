@@ -57,6 +57,8 @@ UPLOAD_SCRIPT = "upload_bids.py"  # Script for uploading data
 SCRIPT_ORDER = [
     "scrapers/01_BuySpeed_01.py",
     "scrapers/01_BuySpeed_02.py",
+    "scrapers/01_BuySpeed_03.py",
+    "scrapers/01_BuySpeed_04.py",
     "scrapers/02_NYC.py",
     "scrapers/03_TXSMartBuy.py",
     "scrapers/05_NYSCR.py",

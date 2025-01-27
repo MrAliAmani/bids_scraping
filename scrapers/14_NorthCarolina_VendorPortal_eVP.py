@@ -493,7 +493,7 @@ def cleanup_temp_folder():
             if os.path.isfile(item_path):
                 os.remove(item_path)
             elif os.path.isdir(item_path):
-                shutil.rmtree(item_path)
+                shutil.rmtree(item_path, ignore_errors=True)
         logger.info(f"Cleaned up temporary download folder: {TEMP_DOWNLOAD_FOLDER}")
     except Exception as e:
         logger.error(f"Failed to clean up temporary download folder: {e}")
@@ -562,8 +562,17 @@ def main():
         # Rename folder to indicate completion
         completed_folder = os.path.join(main_folder, f"{SCRIPT_NAME}_COMPLETED")
         try:
-            if os.path.exists(TEMP_DOWNLOAD_FOLDER):
-                os.rename(TEMP_DOWNLOAD_FOLDER, completed_folder)
+            # Clean up temporary download folder before renaming
+            try:
+                if os.path.exists(TEMP_DOWNLOAD_FOLDER):
+                    shutil.rmtree(TEMP_DOWNLOAD_FOLDER, ignore_errors=True)
+                    logger.info(f"✅ Removed temporary download folder: {TEMP_DOWNLOAD_FOLDER}")
+            except Exception as e:
+                logger.error(f"⚠️ Error removing temporary folder: {str(e)}")
+
+            # Now rename the working folder to completed
+            if os.path.exists(working_folder):
+                os.rename(working_folder, completed_folder)
                 logger.info(f"Renamed folder to {completed_folder}")
         except Exception as e:
             logger.error(f"Failed to rename folder: {e}")

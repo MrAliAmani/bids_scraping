@@ -753,6 +753,14 @@ def main():
 
         print("All Bids and Attachments Extraction Successfully Completed")
 
+        # Clean up temporary download folder before renaming
+        try:
+            if os.path.exists(script_download_folder):
+                shutil.rmtree(script_download_folder)
+                print(f"✅ Removed temporary download folder: {script_download_folder}")
+        except Exception as e:
+            print(f"⚠️ Error removing temporary folder: {str(e)}")
+
         # Rename folder to mark as completed
         completed_folder_name = f"{script_name}_COMPLETED"
         completed_folder = os.path.join(main_folder, completed_folder_name)

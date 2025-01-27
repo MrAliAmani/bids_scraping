@@ -980,6 +980,15 @@ def main(days_to_scrape):
             if bids_data:
                 save_to_excel(bids_data, days_to_scrape, temp_folder_path)
 
+                # Clean up temporary download folder first
+                temp_download_folder = os.path.join(temp_folder_path, script_name)
+                if os.path.exists(temp_download_folder):
+                    try:
+                        shutil.rmtree(temp_download_folder, ignore_errors=True)
+                        print(f"✅ Removed temporary download folder: {temp_download_folder}")
+                    except Exception as e:
+                        print(f"Error removing temporary download folder: {e}")
+
                 # Rename folder to mark completion
                 completed_folder = f"{script_name}_COMPLETED"
                 completed_folder_path = os.path.join(yesterday_folder, completed_folder)
@@ -1013,6 +1022,15 @@ def main(days_to_scrape):
         finally:
             if driver:
                 driver.quit()
+            
+            # Remove cookies file
+            cookie_file = "cookies.pkl"
+            if os.path.exists(cookie_file):
+                try:
+                    os.remove(cookie_file)
+                    print("🗑️ Removed cookies file")
+                except Exception as e:
+                    print(f"Error removing cookies file: {e}")
 
     if bids_data is None:
         logging.error("Failed to retrieve any bid data after all attempts.")

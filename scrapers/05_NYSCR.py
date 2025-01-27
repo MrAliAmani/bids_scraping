@@ -926,6 +926,14 @@ def main():
         print("All Bids and Attachments Extraction Successfully Completed")
         play_notification_sound()
 
+        # Clean up temporary download folder before renaming
+        try:
+            if os.path.exists(temp_download_folder):
+                shutil.rmtree(temp_download_folder)
+                print("✅ Removed temporary download folder")
+        except Exception as e:
+            print(f"⚠️ Error removing temporary folder: {str(e)}")
+
         # When renaming the completed folder, maintain the same structure
         completed_folder = os.path.join(date_folder, f"{SCRIPT_NAME}_COMPLETED")
         if os.path.exists(completed_folder):
@@ -934,6 +942,15 @@ def main():
         print(f"Renamed folder to: {completed_folder}")
 
     finally:
+        # Save cookies before quitting
+        cookie_file = "cookies.pkl"
+        if os.path.exists(cookie_file):
+            try:
+                os.remove(cookie_file)
+                print("🗑️ Removed cookies file")
+            except Exception as e:
+                print(f"Error removing cookies file: {e}")
+                
         driver.quit()
         # Clean up the temporary download folder
         shutil.rmtree(temp_download_folder, ignore_errors=True)

@@ -209,9 +209,7 @@ def setup_driver():
 
 def wait_for_element(driver, by, value, timeout=60):
     """Wait for an element to be present and visible."""
-    return WebDriverWait(driver, timeout).until(
-        EC.visibility_of_element_located((by, value))
-    )
+    return WebDriverWait(driver, timeout).until(EC.visibility_of_element_located((by, value)))
 
 
 def perform_advanced_search(driver):
@@ -395,6 +393,11 @@ def extract_auc_ids(driver):
             "#l0RESP_INQA_HD_VW_GR\\$0 li span[data-if-label='tdEventId']",
         )
 
+        # Check if there are any bids (excluding header)
+        if len(auc_id_elements) <= 1:  # Only header present or no elements
+            print("No bids found in search results")
+            return None  # Return None instead of empty list to indicate no bids
+
         for element in auc_id_elements[1:]:  # Skip the first element
             auc_id = element.text.split("-")[-1]  # Extract the numeric part
             auc_ids.append(auc_id)
@@ -402,6 +405,7 @@ def extract_auc_ids(driver):
         print(f"📊 AUC IDs Successfully Extracted: {len(auc_ids)}")
     except Exception as e:
         print(f"Error extracting AUC IDs: {str(e)}")
+        return None  # Return None on error
     return auc_ids
 
 
@@ -1285,6 +1289,12 @@ def main():
     """Main function to execute the SF City Partner bid extraction process."""
     global scraped_bids, DAYS_TO_SEARCH
 
+    # Parse command line arguments
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--days', type=int, default=2, help='Number of days to search')
+    args = parser.parse_args()
+    DAYS_TO_SEARCH = args.days
+
     # Load previously scraped and skipped bids
     scraped_bids, skipped_bids = load_progress()
     logging.info(
@@ -1298,90 +1308,108 @@ def main():
         # Start fresh driver instance with random configuration
         driver = setup_driver()
 
-        # Add random delay before first request
-        time.sleep(random.uniform(2, 5))
+        try:
+            # Add random delay before first request
+            time.sleep(random.uniform(2, 5))
 
-        # Load the page
-        driver.get("https://sfcitypartner.sfgov.org/pages/Events-BS3/event-search.aspx")
+            # Load the page
+            driver.get("https://sfcitypartner.sfgov.org/pages/Events-BS3/event-search.aspx")
 
-        # Add random delay before search
-        time.sleep(random.uniform(1, 3))
+            # Add random delay before search
+            time.sleep(random.uniform(1, 3))
 
-        perform_advanced_search(driver)
+            perform_advanced_search(driver)
 
-        # Extract all AUC IDs
-        auc_ids = extract_auc_ids(driver)
-        if not auc_ids:
-            logging.warning("No bids found")
-            return
+            # Extract all AUC IDs
+            auc_ids = extract_auc_ids(driver)
+            if auc_ids is None:  # Changed from if not auc_ids
+                logging.warning("No bids found")
+                # Clean up before marking as completed
+                try:
+                    driver.quit()
+                except:
+                    pass
+                cleanup_drivers()
+                cleanup_temp_folder()
+                # Mark folder as completed since there are no bids to process
+                mark_folder_as_completed()
+                return
 
-        # Save total number of bids
-        save_progress(scraped_bids, skipped_bids, len(auc_ids))
-
-        # Find the first unprocessed bid
-        next_bid = None
-        for auc_id in auc_ids:
-            if auc_id not in scraped_bids and auc_id not in skipped_bids:
-                next_bid = auc_id
-                break
-
-        if next_bid is None:
-            logging.info("✅ All bids have been processed!")
-            mark_folder_as_completed()
-            return
-
-        # Process the next unprocessed bid
-        bid_url = construct_bid_url(next_bid)
-        driver.get(bid_url)
-
-        # Check for lookup page
-        if handle_lookup_page(driver, next_bid):
-            skipped_bids.add(next_bid)
+            # Save total number of bids
             save_progress(scraped_bids, skipped_bids, len(auc_ids))
-            print(f"Moving on to next bid...")
-            return
 
-        # Extract bid details
-        result = extract_bid_details(
-            driver, next_bid, len(scraped_bids) + 1, len(auc_ids)
-        )
+            # Find the first unprocessed bid
+            next_bid = None
+            for auc_id in auc_ids:
+                if auc_id not in scraped_bids and auc_id not in skipped_bids:
+                    next_bid = auc_id
+                    break
 
-        # Handle the result
-        if result is None:  # Bid was skipped
-            skipped_bids.add(next_bid)
-        else:  # Bid was successfully scraped
-            scraped_bids.add(next_bid)
+            if next_bid is None:
+                logging.info("✅ All bids have been processed!")
+                mark_folder_as_completed()
+                return
 
-        # Save progress
-        save_progress(scraped_bids, skipped_bids, len(auc_ids))
+            # Process the next unprocessed bid
+            bid_url = construct_bid_url(next_bid)
+            driver.get(bid_url)
 
-        # Show remaining bids
-        remaining = len(auc_ids) - len(scraped_bids) - len(skipped_bids)
-        if remaining > 0:
-            print(f"\n🔄 {remaining} bids remaining to process")
-            print(f"Scraped: {len(scraped_bids)}, Skipped: {len(skipped_bids)}")
-            print("Please run the script again for the next bid.")
-        else:
-            print("\n✅ All bids have been processed!")
-            print(
-                f"Final count - Scraped: {len(scraped_bids)}, Skipped: {len(skipped_bids)}"
+            # Check for lookup page
+            if handle_lookup_page(driver, next_bid):
+                skipped_bids.add(next_bid)
+                save_progress(scraped_bids, skipped_bids, len(auc_ids))
+                print(f"Moving on to next bid...")
+                return
+
+            # Extract bid details
+            result = extract_bid_details(
+                driver, next_bid, len(scraped_bids) + 1, len(auc_ids)
             )
-            mark_folder_as_completed()
+
+            # Handle the result
+            if result is None:  # Bid was skipped
+                skipped_bids.add(next_bid)
+            else:  # Bid was successfully scraped
+                scraped_bids.add(next_bid)
+
+            # Save progress
+            save_progress(scraped_bids, skipped_bids, len(auc_ids))
+
+            # Show remaining bids
+            remaining = len(auc_ids) - len(scraped_bids) - len(skipped_bids)
+            if remaining > 0:
+                print(f"\n🔄 {remaining} bids remaining to process")
+                print(f"Scraped: {len(scraped_bids)}, Skipped: {len(skipped_bids)}")
+                print("Please run the script again for the next bid.")
+            else:
+                print("\n✅ All bids have been processed!")
+                print(
+                    f"Final count - Scraped: {len(scraped_bids)}, Skipped: {len(skipped_bids)}"
+                )
+                # Clean up before marking as completed
+                try:
+                    driver.quit()
+                except:
+                    pass
+                cleanup_drivers()
+                cleanup_temp_folder()
+                mark_folder_as_completed()
+
+        finally:
+            # Clean up driver in all cases
+            try:
+                driver.quit()
+            except:
+                pass
+            time.sleep(1)
+            cleanup_drivers()
+            cleanup_temp_folder()
 
     except Exception as e:
-        error_message = (
-            f"An error occurred: {str(e)}\nCurrent URL: {driver.current_url}"
-        )
+        error_message = f"An error occurred: {str(e)}"
+        if 'driver' in locals():
+            error_message += f"\nCurrent URL: {driver.current_url}"
         handle_error(error_message)
-
-    finally:
-        try:
-            driver.quit()
-        except:
-            pass
-        time.sleep(1)
-        cleanup_drivers()
-        cleanup_temp_folder()
 
 
 if __name__ == "__main__":

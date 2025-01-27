@@ -1306,14 +1306,20 @@ def scrape_city_record():
         move_remaining_downloads(download_folder, main_folder)
         remove_empty_folders(main_folder)
 
-        # Remove the bulk update of SL No as it's now handled in update_excel function
-
         if total_bids_processed > 0:
             print(f"💾 Final bid results saved to 02_NYC.xlsx in {script_folder}")
         else:
             print("❌ No bids were processed. No Excel file created.")
 
         print("🎉 All Bids and Attachments Extraction Successfully Completed")
+
+        # Clean up temporary download folder before renaming
+        try:
+            if os.path.exists(download_folder):
+                shutil.rmtree(download_folder)
+                print(f"✅ Removed temporary download folder: {download_folder}")
+        except Exception as e:
+            print(f"⚠️ Error removing temporary folder: {str(e)}")
 
         # Rename the script folder to indicate completion
         completed_folder = script_folder.replace("_IN_PROGRESS", "_COMPLETED")
@@ -1340,9 +1346,13 @@ def scrape_city_record():
         driver.quit()
         print("Browser closed")
 
-        # Remove the temporary download folder
-        shutil.rmtree(download_folder, ignore_errors=True)
-        print(f"Removed temporary download folder: {download_folder}")
+        # Remove any remaining temporary download folder
+        try:
+            if os.path.exists(download_folder):
+                shutil.rmtree(download_folder)
+                print(f"Removed temporary download folder: {download_folder}")
+        except Exception as e:
+            print(f"Error cleaning up download folder: {str(e)}")
 
 
 if __name__ == "__main__":

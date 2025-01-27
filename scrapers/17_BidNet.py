@@ -1,6 +1,7 @@
 import sys
 import os
 import io
+import shutil
 
 # Set stdout encoding to UTF-8 - only do this once at the start
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
@@ -495,10 +496,15 @@ class BidNetScraper:
         self.script_folder_in_progress = self.main_folder / f"{self.script_name}_IN_PROGRESS"
         self.script_folder = self.script_folder_in_progress / self.script_name
         
-        # Update cache location
-        cache_dir = Path("cache")
-        cache_dir.mkdir(exist_ok=True)
-        self.cache_file = cache_dir / f"{self.script_name}_cache.json"
+        # Update cache location and ensure it exists
+        self.cache_dir = Path("cache")
+        self.cache_dir.mkdir(exist_ok=True)
+        self.cache_file = self.cache_dir / f"{self.script_name}_cache.json"
+        
+        # Create empty cache file if it doesn't exist
+        if not self.cache_file.exists():
+            with open(self.cache_file, "w") as f:
+                json.dump({}, f, indent=2)
         
         self.log_file = self.main_folder / "bidnet_scraper.log"
 
@@ -512,9 +518,6 @@ class BidNetScraper:
 
     def setup_logging(self):
         """Configure logging with proper directory structure"""
-        # Ensure log file directory exists
-        self.log_file.parent.mkdir(parents=True, exist_ok=True)
-
         # Configure logging
         logger = logging.getLogger(__name__)
         logger.setLevel(logging.INFO)
@@ -525,12 +528,7 @@ class BidNetScraper:
         # Create formatter
         formatter = logging.Formatter("%(message)s")
 
-        # File handler
-        file_handler = logging.FileHandler(self.log_file, encoding="utf-8")
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
-
-        # Console handler
+        # Console handler only
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setFormatter(formatter)
         logger.addHandler(console_handler)
@@ -883,10 +881,11 @@ class BidNetScraper:
                 for bid_url, data in cache.items():
                     try:
                         posted_date = datetime.strptime(data["posted_date"], "%Y-%m-%d")
-                        if (current_date - posted_date).days <= 90:
+                        if (current_date - posted_date).days <= 90:  # Keep bids from last 3 months
                             cleaned_cache[bid_url] = data
                     except Exception as e:
-                        print(f"⚠️ Warning: Could not process cache entry for bid {bid_url}: {str(e)}")
+                        self.logger.error(f"Error processing cache entry: {str(e)}")
+                        continue
 
                 # Save cleaned cache
                 with open(self.cache_file, "w") as f:
@@ -895,12 +894,11 @@ class BidNetScraper:
                 return cleaned_cache
             return {}
         except Exception as e:
-            print(f"❌ Error loading cache: {str(e)}")
+            self.logger.error(f"Error loading cache: {str(e)}")
             return {}
 
-
     def save_to_cache(self, bid_data: Dict):
-        """Save processed bid to cache with additional metadata"""
+        """Save processed bid to cache with metadata"""
         try:
             cache = self.load_cache()
             
@@ -922,10 +920,79 @@ class BidNetScraper:
                     json.dump(cache, f, indent=2)
                 self.logger.info(f"✅ Successfully cached bid: {bid_data['solicitation_number']}")
             except ValueError as e:
-                pass
+                self.logger.error(f"Error formatting date for cache: {str(e)}")
                 
         except Exception as e:
-            self.logger.error(f"❌ Error saving to cache: {str(e)}")
+            self.logger.error(f"Error saving to cache: {str(e)}")
+
+    def is_bid_in_cache(self, url: str, solicitation_number: str) -> bool:
+        """Check if bid is already in cache"""
+        try:
+            cache = self.load_cache()
+            
+            # Check by URL
+            if url in cache:
+                self.logger.info(f"⏭️ Bid already processed (URL): {solicitation_number}")
+                return True
+            
+            # Also check by solicitation number as fallback
+            for entry in cache.values():
+                if entry.get("solicitation_number") == solicitation_number:
+                    self.logger.info(f"⏭️ Bid already processed (Number): {solicitation_number}")
+                    return True
+                
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"Error checking cache: {str(e)}")
+            return False
+
+    def process_bid_links(self, links: List[Dict[str, str]]) -> None:
+        """Process list of bid links and save to Excel after each bid"""
+        self.logger.info(f"Processing {len(links)} bid links")
+
+        for link in links:
+            try:
+                self.logger.info(f"\nProcessing bid: {link['title']}")
+
+                # Extract bid details with dates from link
+                bid_data = self.extract_bid_details(
+                    url=link["url"],
+                    posted_date=link["publicationDate"],
+                    response_date=link["closingDate"]
+                )
+                if not bid_data:
+                    continue
+
+                # Check if bid is already processed
+                if self.is_bid_in_cache(link["url"], bid_data.solicitation_number):
+                    continue
+
+                # Download attachments
+                attachments = self.download_bid_attachments(bid_data.solicitation_number)
+                bid_data.attachments = attachments
+                if attachments:
+                    self.logger.info(f"Downloaded Attachments: {attachments}")
+
+                # Format dates before saving
+                bid_data.posted_date = self.format_date(bid_data.posted_date)
+                bid_data.response_date = self.format_date(bid_data.response_date)
+
+                # Save to cache
+                self.save_to_cache(asdict(bid_data))
+
+                # Update Excel file
+                if self.update_excel_after_bid(bid_data):
+                    self.logger.info(f"✅ Successfully processed and saved bid: {bid_data.solicitation_number}")
+                else:
+                    self.logger.error(f"❌ Failed to save bid to Excel: {bid_data.solicitation_number}")
+
+                self.random_delay(2, 4)
+
+            except Exception as e:
+                self.logger.error(f"❌ Error processing bid {link['title']}: {str(e)}")
+                play_notification_sound()
+                input("Press Enter to continue...")
 
     def __enter__(self):
         """Context manager entry"""
@@ -944,6 +1011,14 @@ class BidNetScraper:
         """Change folder suffix from _IN_PROGRESS to _COMPLETED"""
         try:
             completed_folder = self.main_folder / f"{self.script_name}_COMPLETED"
+            
+            # Clean up temporary download folder first
+            try:
+                if self.script_folder.exists():
+                    shutil.rmtree(self.script_folder, ignore_errors=True)
+                    print(f"✅ Removed temporary download folder: {self.script_folder}")
+            except Exception as e:
+                print(f"⚠️ Error removing temporary folder: {str(e)}")
             
             # If COMPLETED folder already exists, remove it first
             if completed_folder.exists():
@@ -1547,8 +1622,9 @@ class BidNetScraper:
                 return getCategory();
                 """
                 category_str = self.driver.execute_script(category_script)
-            except Exception as e:
-                self.logger.info(f"Category info not available: {str(e)}")
+            except:
+                self.logger.info("Category info not available")
+                category_str = ""
 
             # Create bid data object
             bid_data = BidData(
@@ -1593,10 +1669,10 @@ class BidNetScraper:
                 return ""
                 
             clean_solicitation = re.sub(r'[<>:"/\\|?*]', '_', solicitation_number)
-            bid_folder = self.script_folder / clean_solicitation
+            bid_folder = self.script_folder_in_progress / clean_solicitation
             bid_folder.mkdir(parents=True, exist_ok=True)
 
-            # Click Documents tab
+            # Click Documents tab with timeout and error handling
             try:
                 docs_tab = WebDriverWait(self.driver, 10).until(
                     EC.element_to_be_clickable((By.CSS_SELECTOR, "#docs-itemsAbstractTab > a"))
@@ -1640,6 +1716,10 @@ class BidNetScraper:
                     self.driver.get(link["url"])
                     self.logger.info(f"⏳ Downloading: {filename}")
 
+                    # Added: Download timeout
+                    download_timeout = 300  # 5 minutes
+                    start_time = time.time()
+
                     # Wait for download to start and complete
                     while True:
                         if temp_download_path.exists():
@@ -1647,21 +1727,38 @@ class BidNetScraper:
                             last_size = -1
                             current_size = temp_download_path.stat().st_size
                             
-                            while last_size != current_size:
+                            size_check_timeout = time.time() + 30  # 30 seconds timeout for size check
+                            
+                            while last_size != current_size and time.time() < size_check_timeout:
                                 time.sleep(2)
                                 last_size = current_size
-                                current_size = temp_download_path.stat().st_size
+                                if temp_download_path.exists():  # Check if file still exists
+                                    current_size = temp_download_path.stat().st_size
+                                else:
+                                    break
                             
-                            # Move to bid folder
-                            safe_move(str(temp_download_path), str(download_path))
-                            downloaded_files.append(filename)
-                            self.logger.info(f"✅ Download complete")
+                            # Move to bid folder if file exists and size is stable
+                            if temp_download_path.exists():
+                                safe_move(str(temp_download_path), str(download_path))
+                                downloaded_files.append(filename)
+                                self.logger.info(f"✅ Download complete")
+                            break
+                        
+                        # Check for timeout
+                        if time.time() - start_time > download_timeout:
+                            self.logger.error(f"Download timeout for {filename}")
                             break
                         
                         time.sleep(1)
 
                 except Exception as e:
                     self.logger.info(f"Could not download {filename}: {str(e)}")
+                    # Added: Clean up any partial downloads
+                    if temp_download_path.exists():
+                        try:
+                            temp_download_path.unlink()
+                        except:
+                            pass
                     continue
 
             if downloaded_files:
@@ -1691,65 +1788,10 @@ class BidNetScraper:
             
             # Try parsing as MM/DD/YYYY
             date_obj = datetime.strptime(date_part, "%m/%d/%Y")
-            self.logger.info("✓ The date is converted")
             return date_obj.strftime("%Y-%m-%d")
                 
         except Exception:
             return date_str
-
-    def process_bid_links(self, links: List[Dict[str, str]]) -> None:
-        """Process list of bid links and save to Excel after each bid"""
-        self.logger.info(f"Processing {len(links)} bid links")
-
-        for link in links:
-            try:
-                self.logger.info(f"\nProcessing bid: {link['title']}")
-
-                # Extract bid details with dates from link
-                bid_data = self.extract_bid_details(
-                    url=link["url"],
-                    posted_date=link["publicationDate"],
-                    response_date=link["closingDate"]
-                )
-                if not bid_data:
-                    continue
-
-                # Log extracted details
-                self.logger.info("\nExtracted Bid Details:")
-                self.logger.info(f"Solicitation Number: {bid_data.solicitation_number}")
-                self.logger.info(f"Title: {bid_data.solicitation_title}")
-                self.logger.info(f"Agency: {bid_data.agency}")
-                self.logger.info(f"Posted Date: {bid_data.posted_date}")
-                self.logger.info(f"Response Date: {bid_data.response_date}")
-                self.logger.info(f"Notice Type: {bid_data.notice_type}")
-                self.logger.info(f"Category: {bid_data.category}")
-
-                # Download attachments
-                attachments = self.download_bid_attachments(bid_data.solicitation_number)
-                bid_data.attachments = attachments
-                if attachments:
-                    self.logger.info(f"Downloaded Attachments: {attachments}")
-
-                # Format dates before saving
-                bid_data.posted_date = self.format_date(bid_data.posted_date)
-                bid_data.response_date = self.format_date(bid_data.response_date)
-
-                # Save to cache
-                self.save_to_cache(asdict(bid_data))
-
-                # Update Excel file
-                if self.update_excel_after_bid(bid_data):
-                    self.logger.info(f"✅ Successfully processed and saved bid: {bid_data.solicitation_number}")
-                else:
-                    self.logger.error(f"❌ Failed to save bid to Excel: {bid_data.solicitation_number}")
-
-                self.random_delay(2, 4)
-
-            except Exception as e:
-                self.logger.error(f"❌ Error processing bid {link['title']}: {str(e)}")
-                play_notification_sound()
-                input("Press Enter to continue...")
-
 
     def save_to_excel(self) -> bool:
         """Save bid data to Excel file with proper formatting"""

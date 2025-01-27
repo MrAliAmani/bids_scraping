@@ -3,6 +3,8 @@ import time
 import json
 import os
 from datetime import datetime, timedelta
+import shutil
+import sys
 
 
 def get_progress_file_path():
@@ -90,36 +92,70 @@ def main():
     print(f"Already scraped: {current_bid}")
     print(f"Remaining bids: {total_bids - current_bid}")
 
-    while current_bid < total_bids:
+    try:
+        while current_bid < total_bids:
+            try:
+                print(f"\n📑 Starting scrape for bid {current_bid + 1} of {total_bids}")
+                print("=" * 50)
+
+                # Get days argument from command line
+                days_arg = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] == '--days' else None
+                days_value = sys.argv[2] if days_arg and len(sys.argv) > 2 else None
+
+                # Run the scraper script with days argument if provided
+                cmd = ["python", scraper_path]
+                if days_value:
+                    cmd.extend(["--days", days_value])
+                
+                result = subprocess.run(cmd, check=True, text=True)
+
+                # Check if the folder was marked as completed (indicating no bids found)
+                yesterday = datetime.now() - timedelta(days=1)
+                base_folder = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                date_folder = os.path.join(base_folder, yesterday.strftime("%Y-%m-%d"))
+                completed_folder = os.path.join(date_folder, "08_SFCityPartner_COMPLETED")
+                
+                if os.path.exists(completed_folder):
+                    print("\n✅ No bids found - Scraping completed")
+                    return
+
+                # Check if all bids are processed after each run
+                if check_all_bids_processed():
+                    break
+
+                # Update progress
+                current_bid = get_scraped_bids_count()
+
+                if current_bid < total_bids:
+                    print(f"\n⏳ Waiting 30 seconds before next bid...")
+                    time.sleep(30)  # Wait between runs
+
+            except subprocess.CalledProcessError as e:
+                print(f"❌ Error running scraper: {e}")
+                retry = input("\nRetry this bid? (y/n): ").lower().strip()
+                if retry != "y":
+                    break
+            except KeyboardInterrupt:
+                print("\n⚠️ Script interrupted by user")
+                break
+            except Exception as e:
+                print(f"❌ Unexpected error: {e}")
+                break
+
+    finally:
+        # Ensure cleanup of temporary download folder
+        yesterday = datetime.now() - timedelta(days=1)
+        base_folder = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        date_folder = os.path.join(base_folder, yesterday.strftime("%Y-%m-%d"))
+        main_folder = os.path.join(date_folder, "08_SFCityPartner_IN_PROGRESS")
+        temp_download_folder = os.path.join(main_folder, "08_SFCityPartner")
+        
         try:
-            print(f"\n📑 Starting scrape for bid {current_bid + 1} of {total_bids}")
-            print("=" * 50)
-
-            # Run the scraper script
-            result = subprocess.run(["python", scraper_path], check=True, text=True)
-
-            # Check if all bids are processed after each run
-            if check_all_bids_processed():
-                break
-
-            # Update progress
-            current_bid = get_scraped_bids_count()
-
-            if current_bid < total_bids:
-                print(f"\n⏳ Waiting 30 seconds before next bid...")
-                time.sleep(30)  # Wait between runs
-
-        except subprocess.CalledProcessError as e:
-            print(f"❌ Error running scraper: {e}")
-            retry = input("\nRetry this bid? (y/n): ").lower().strip()
-            if retry != "y":
-                break
-        except KeyboardInterrupt:
-            print("\n⚠️ Script interrupted by user")
-            break
+            if os.path.exists(temp_download_folder):
+                shutil.rmtree(temp_download_folder)
+                print(f"✅ Removed temporary download folder: {temp_download_folder}")
         except Exception as e:
-            print(f"❌ Unexpected error: {e}")
-            break
+            print(f"⚠️ Error removing temporary folder: {str(e)}")
 
 
 if __name__ == "__main__":

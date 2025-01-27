@@ -116,8 +116,14 @@ def create_temp_folder():
 
     def cleanup_temp(path):
         try:
+            # First clean up the downloads folder while the parent structure is intact
+            downloads_folder = os.path.join(path, script_name)
+            if os.path.exists(downloads_folder):
+                shutil.rmtree(downloads_folder)
+                logging.info(f"Successfully removed temporary download folder: {downloads_folder}")
+
+            # Then handle the parent folder renaming
             if os.path.exists(path):
-                # Rename the folder to indicate completion
                 completed_folder = path.replace("_IN_PROGRESS", "_COMPLETED")
                 if os.path.exists(completed_folder):
                     shutil.rmtree(completed_folder)
@@ -1012,7 +1018,7 @@ def main():
 
     finally:
         driver.quit()
-        shutil.rmtree(temp_download_dir, ignore_errors=True)
+        # Remove the cleanup of temp_download_dir from here since it's now handled in create_temp_folder()
 
 
 if __name__ == "__main__":

@@ -612,6 +612,24 @@ def extract_bids(driver, days, main_dir, script_download_dir):
             break
 
     print(f"\n📊 Total bids extracted: {len(bids)}")
+
+    # Final cleanup - Add this before renaming the folder
+    try:
+        if os.path.exists(script_download_dir):
+            shutil.rmtree(script_download_dir, ignore_errors=True)
+            print(f"✅ Removed temporary download folder: {script_download_dir}")
+    except Exception as e:
+        print(f"⚠️ Error removing temporary folder: {str(e)}")
+
+    # Mark folder as completed
+    try:
+        completed_folder = os.path.join(os.path.dirname(main_dir), f"{os.path.basename(main_dir)}_COMPLETED")
+        os.rename(main_dir, completed_folder)
+        main_dir = completed_folder  # Update the reference
+        print(f"✅ Renamed folder to indicate completion: {completed_folder}")
+    except Exception as e:
+        print(f"⚠️ Error renaming folder: {str(e)}")
+
     return bids
 
 
@@ -1690,7 +1708,7 @@ def main():
         # Clean up download directory
         try:
             if os.path.exists(script_download_dir):
-                shutil.rmtree(script_download_dir)
+                shutil.rmtree(script_download_dir, ignore_errors=True)
                 print("\n🗑️ Cleaned up temporary download directory")
         except Exception as e:
             print(f"\n⚠️ Error cleaning up download directory: {str(e)}")

@@ -107,17 +107,10 @@ def get_base_folder():
 def setup_logger():
 	"""Set up logging configuration"""
 	try:
-		base_folder = get_base_folder()
-		if not os.path.exists(base_folder):
-			os.makedirs(base_folder)
-			
-		log_file = os.path.join(base_folder, '18_ionwave_scraper.log')
-		
 		logging.basicConfig(
 			level=logging.INFO,
 			format='%(asctime)s - %(levelname)s - %(message)s',
 			handlers=[
-				logging.FileHandler(log_file, encoding='utf-8'),
 				logging.StreamHandler()
 			]
 		)
@@ -789,6 +782,15 @@ def complete_scraping():
 		script_name = os.path.splitext(os.path.basename(__file__))[0]
 		in_progress_path = os.path.join(base_folder, f"{script_name}_IN_PROGRESS")
 		completed_path = os.path.join(base_folder, f"{script_name}_COMPLETED")
+		
+		# Clean up temporary download folder first
+		try:
+			download_folder = os.path.join(in_progress_path, script_name)
+			if os.path.exists(download_folder):
+				shutil.rmtree(download_folder, ignore_errors=True)
+				logger.info(f"[SUCCESS] Removed temporary download folder: {download_folder}")
+		except Exception as e:
+			logger.error(f"[ERROR] Failed to remove download folder: {str(e)}")
 		
 		if os.path.exists(in_progress_path):
 			try:

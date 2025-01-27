@@ -432,7 +432,7 @@ def download_attachments(driver, bid_number, main_folder, downloads_folder):
 
 
 def main():
-    """Main function to execute the bid extraction process."""
+    """Main function to execute the bid extraction process for multiple sites."""
     args = parse_arguments()
     days = args.days
     print(f"Bids Extraction Started for the last {days} days")
@@ -640,6 +640,14 @@ def main():
         completed_folder_name = f"{script_name}_COMPLETED"
         completed_folder = os.path.join(main_folder, completed_folder_name)
         try:
+            # Clean up temporary download folder before renaming
+            try:
+                if os.path.exists(downloads_folder):
+                    shutil.rmtree(downloads_folder)
+                    print(f"✅ Removed temporary download folder: {downloads_folder}")
+            except Exception as e:
+                print(f"⚠️ Error removing temporary folder: {str(e)}")
+
             # Remove completed folder if it already exists
             if os.path.exists(completed_folder):
                 shutil.rmtree(completed_folder)
@@ -655,7 +663,6 @@ def main():
     except Exception as e:
         print(f"An error occurred: {str(e)}")
         import traceback
-
         print(traceback.format_exc())
         play_notification_sound()
         input("Press Enter to continue...")

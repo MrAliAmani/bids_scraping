@@ -928,11 +928,7 @@ def main():
         "https://www.commbuys.com/bso/view/search/external/advancedSearchBid.xhtml?openBids=true",
         "https://gvibuy.buyspeed.com/bso/view/search/external/advancedSearchBid.xhtml",
         "https://longbeachbuys.buyspeed.com/bso/view/search/external/advancedSearchBid.xhtml?openBids=true",
-        "https://procure.portlandoregon.gov/bso/view/search/external/advancedSearchBid.xhtml?openBids=true",
-        "https://knoxbuys.buyspeed.com/bso/view/search/external/advancedSearchBid.xhtml?openBids=true",
-        "https://oregon-uat.buyspeed.com/bso/view/search/external/advancedSearchBid.xhtml?openBids=true",
-        "https://www.njstart.gov/bso/view/search/external/advancedSearchBid.xhtml?openBids=true",
-        "https://epro.sbcounty.gov/bso/view/search/external/advancedSearchBid.xhtml",
+        "https://procure.portlandoregon.gov/bso/view/search/external/advancedSearchBid.xhtml?openBids=true"
     ]
 
     sl_no = 1  # Global counter for all bids across all sites
@@ -1047,10 +1043,11 @@ def main():
                 except:
                     pass
 
-    # Final cleanup
+    # Final cleanup - Add this before renaming the folder
     try:
-        shutil.rmtree(script_download_folder)
-        log_message("✅ Removed temporary download folder")
+        if os.path.exists(script_download_folder):
+            shutil.rmtree(script_download_folder)
+            log_message("✅ Removed temporary download folder")
     except Exception as e:
         log_message(f"⚠️ Error removing temporary folder: {str(e)}")
 

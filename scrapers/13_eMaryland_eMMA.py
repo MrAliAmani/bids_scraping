@@ -42,6 +42,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from queue import Queue
 import json
 from pathlib import Path
+from selenium.webdriver.common.keys import Keys
 
 # Script name
 script_name = os.path.splitext(os.path.basename(__file__))[0]
@@ -71,10 +72,11 @@ def play_notification(frequency=2500, duration=1000):
 
 
 def error_handler(error_message):
-    """Handle errors by playing a notification and pausing the script."""
+    """Handle errors by logging and exiting."""
     logger.error(f"Error: {error_message}")
     play_notification()
-    input("Press Enter to continue...")
+    # Instead of waiting for input, log the error and continue
+    logger.error("Continuing after error...")
 
 
 def setup_driver():
@@ -133,18 +135,31 @@ def setup_driver():
 
 
 def keep_session_alive(driver):
-    """Perform actions to keep the session alive."""
+    """Perform actions to keep the session alive and prevent screensaver."""
     try:
-        # Scroll slightly to simulate activity
-        driver.execute_script("window.scrollTo(0, window.scrollY + 1)")
-        driver.execute_script("window.scrollTo(0, window.scrollY - 1)")
-
-        # Move mouse to prevent system idle
+        # More robust session keeping approach
         actions = ActionChains(driver)
-        actions.move_by_offset(1, 1).perform()
-        actions.move_by_offset(-1, -1).perform()
-
+        
+        # Move mouse to different positions
+        actions.move_by_offset(0, 1).perform()
+        time.sleep(0.5)
+        actions.move_by_offset(0, -1).perform()
+        
+        # Scroll slightly
+        driver.execute_script("window.scrollTo(0, window.scrollY + 1);")
+        time.sleep(0.5)
+        driver.execute_script("window.scrollTo(0, window.scrollY - 1);")
+        
+        # Press a harmless key (SHIFT)
+        actions.key_down(Keys.SHIFT).key_up(Keys.SHIFT).perform()
+        
+        # Reset mouse position
+        actions.move_to_element(driver.find_element(By.TAG_NAME, "body")).perform()
+        
     except Exception as e:
+        # If session is already disconnected, don't throw error
+        if "disconnected" in str(e).lower():
+            return
         logger.warning(f"Error in keep_session_alive: {str(e)}")
 
 
@@ -567,6 +582,8 @@ def is_file_already_downloaded(bid_folder, filename):
 
 def wait_for_download_complete(download_folder):
     """Wait indefinitely until download completes and return the downloaded filename."""
+    last_reported_files = set()  # Track files we've already reported
+    
     while True:
         # Check for .crdownload or .tmp files
         downloading_files = [
@@ -576,10 +593,16 @@ def wait_for_download_complete(download_folder):
         ]
 
         if downloading_files:
-            # Log download in progress
-            for file in downloading_files:
-                base_name = file.replace(".crdownload", "").replace(".tmp", "")
-                logger.info(f"Download in progress: {base_name}")
+            # Log download in progress only for new files
+            current_files = set(downloading_files)
+            new_files = current_files - last_reported_files
+            
+            if new_files:
+                for file in new_files:
+                    base_name = file.replace(".crdownload", "").replace(".tmp", "")
+                    logger.info(f"Download in progress: {base_name}")
+                last_reported_files = current_files
+            
             time.sleep(2)
             continue
 
@@ -612,114 +635,106 @@ def download_attachments(driver, bid_number):
         return []
 
     os.makedirs(bid_folder, exist_ok=True)
-
     bid_url = driver.current_url
     downloaded_attachments = []
 
-    while True:
-        attachments = driver.find_elements(By.CSS_SELECTOR, "a.iv-download-file")
-        if not attachments:
-            break
-
-        # Get all attachment info first
-        attachment_info = []
-        for attachment in attachments:
-            try:
-                name = attachment.find_element(
-                    By.CSS_SELECTOR, "span[data-iv-role='label']"
-                ).text.strip()
-                if not name:  # Skip empty names
-                    continue
-
-                href = attachment.get_attribute("href")
-                normalized_name = normalize_filename(name)
-
-                # Skip if already downloaded
-                if not is_file_already_downloaded(bid_folder, normalized_name):
-                    attachment_info.append((name, normalized_name, href))
-                else:
-                    logger.info(
-                        f"Skipping already downloaded attachment: {normalized_name}"
-                    )
-            except Exception as e:
-                logger.error(f"Error getting attachment info: {str(e)}")
+    # Get all attachment info first
+    attachment_info = []
+    attachments = driver.find_elements(By.CSS_SELECTOR, "a.iv-download-file")
+    
+    for attachment in attachments:
+        try:
+            name = attachment.find_element(
+                By.CSS_SELECTOR, "span[data-iv-role='label']"
+            ).text.strip()
+            if not name:  # Skip empty names
                 continue
 
-        if not attachment_info:
-            break
+            href = attachment.get_attribute("href")
+            normalized_name = normalize_filename(name)
 
-        total_attachments = len(attachment_info)
-        logger.info(
-            f"Found {total_attachments} new attachments to download for bid {bid_number}"
-        )
+            # Skip if already downloaded
+            if not is_file_already_downloaded(bid_folder, normalized_name):
+                attachment_info.append((name, normalized_name, href))
+            else:
+                logger.info(f"Skipping already downloaded attachment: {normalized_name}")
+        except Exception as e:
+            logger.error(f"Error getting attachment info: {str(e)}")
+            continue
 
-        # Process each attachment
-        for index, (name, normalized_name, href) in enumerate(attachment_info, 1):
-            try:
-                logger.info(
-                    f"Processing attachment {index} of {total_attachments}: {normalized_name}"
-                )
+    if not attachment_info:
+        return []
 
-                # Clear download folder before each download
-                for file in os.listdir(temp_download_folder):
-                    try:
-                        os.remove(os.path.join(temp_download_folder, file))
-                    except:
-                        pass
+    total_attachments = len(attachment_info)
+    logger.info(f"Found {total_attachments} new attachments to download for bid {bid_number}")
 
-                # Navigate to download URL
-                base_url = "https://emma.maryland.gov"
-                download_url = base_url + href if href.startswith("/") else href
-                driver.get(download_url)
+    # Process each attachment
+    for index, (name, normalized_name, href) in enumerate(attachment_info, 1):
+        try:
+            logger.info(
+                f"Processing attachment {index} of {total_attachments}: {normalized_name}"
+            )
 
-                # Click download button and wait for download
+            # Clear download folder before each download
+            for file in os.listdir(temp_download_folder):
                 try:
-                    download_button = WebDriverWait(driver, 10).until(
-                        EC.element_to_be_clickable(
-                            (By.CSS_SELECTOR, "button#proxyActionBar_x__cmdEnd")
+                    os.remove(os.path.join(temp_download_folder, file))
+                except:
+                    pass
+
+            # Navigate to download URL
+            base_url = "https://emma.maryland.gov"
+            download_url = base_url + href if href.startswith("/") else href
+            driver.get(download_url)
+
+            # Click download button and wait for download
+            try:
+                download_button = WebDriverWait(driver, 10).until(
+                    EC.element_to_be_clickable(
+                        (By.CSS_SELECTOR, "button#proxyActionBar_x__cmdEnd")
+                    )
+                )
+                driver.execute_script(
+                    "arguments[0].scrollIntoView({block: 'center'});",
+                    download_button,
+                )
+                time.sleep(1)
+                driver.execute_script("arguments[0].click();", download_button)
+                logger.info(f"Started download for: {name}")
+
+                # Wait indefinitely for download to complete
+                downloaded_file = wait_for_download_complete(temp_download_folder)
+
+                # Move file to bid folder
+                if downloaded_file:
+                    source_path = os.path.join(
+                        temp_download_folder, downloaded_file
+                    )
+                    dest_path = os.path.join(bid_folder, normalized_name)
+
+                    try:
+                        safe_move(source_path, dest_path)
+                        downloaded_attachments.append(normalized_name)
+                        logger.info(
+                            f"Successfully downloaded and moved: {normalized_name}"
                         )
-                    )
-                    driver.execute_script(
-                        "arguments[0].scrollIntoView({block: 'center'});",
-                        download_button,
-                    )
-                    time.sleep(1)
-                    driver.execute_script("arguments[0].click();", download_button)
-                    logger.info(f"Started download for: {name}")
+                    except Exception as e:
+                        logger.error(f"Error moving file: {str(e)}")
+                        continue
 
-                    # Wait indefinitely for download to complete
-                    downloaded_file = wait_for_download_complete(temp_download_folder)
+            except TimeoutException:
+                logger.error(
+                    f"Download button not found or not clickable for: {name}"
+                )
+                continue
 
-                    # Move file to bid folder
-                    if downloaded_file:
-                        source_path = os.path.join(
-                            temp_download_folder, downloaded_file
-                        )
-                        dest_path = os.path.join(bid_folder, normalized_name)
+        except Exception as e:
+            logger.error(f"Error processing attachment {normalized_name}: {str(e)}")
 
-                        try:
-                            safe_move(source_path, dest_path)
-                            downloaded_attachments.append(normalized_name)
-                            logger.info(
-                                f"Successfully downloaded and moved: {normalized_name}"
-                            )
-                        except Exception as e:
-                            logger.error(f"Error moving file: {str(e)}")
-                            continue
-
-                except TimeoutException:
-                    logger.error(
-                        f"Download button not found or not clickable for: {name}"
-                    )
-                    continue
-
-            except Exception as e:
-                logger.error(f"Error processing attachment {normalized_name}: {str(e)}")
-
-            finally:
-                # Return to bid page after each download
-                driver.get(bid_url)
-                time.sleep(2)
+        finally:
+            # Return to bid page after each download
+            driver.get(bid_url)
+            time.sleep(2)
 
     # After all downloads complete, handle duplicates and update Excel
     handle_duplicate_files(bid_folder)
@@ -1079,20 +1094,50 @@ def main(days_to_scrape=2):
         logger.info(
             f"🎉 All Bids and Attachments Extraction Successfully Completed for '{script_name}'"
         )
+        
+        # Clean up temporary download folder BEFORE marking as completed
+        try:
+            if os.path.exists(temp_download_folder):
+                # Remove all contents
+                for item in os.listdir(temp_download_folder):
+                    item_path = os.path.join(temp_download_folder, item)
+                    try:
+                        if os.path.isfile(item_path):
+                            os.unlink(item_path)
+                        elif os.path.isdir(item_path):
+                            shutil.rmtree(item_path)
+                    except Exception as e:
+                        logger.error(f"Error removing {item_path}: {str(e)}")
+                
+                # Remove the empty folder
+                try:
+                    os.rmdir(temp_download_folder)
+                    logger.info(f"✅ Removed temporary download folder: {temp_download_folder}")
+                except Exception as e:
+                    logger.error(f"Error removing temp folder: {str(e)}")
+        except Exception as e:
+            logger.error(f"⚠️ Error during cleanup: {str(e)}")
+
         play_notification()  # Play notification sound on successful completion
         mark_folder_completed()  # Mark the folder as completed
 
     except Exception as e:
         error_handler(f"An unexpected error occurred: {str(e)}")
         import traceback
-
         logger.error(traceback.format_exc())
 
     finally:
         # Stop the session keeper thread
         session_thread = None
-        driver.quit()
-        logger.info("WebDriver closed")
+        
+        # Ensure driver is quit
+        if driver:
+            try:
+                driver.quit()
+                logger.info("WebDriver closed")
+            except:
+                pass
+
         cleanup_script_download_folder()
 
 

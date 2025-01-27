@@ -536,6 +536,15 @@ def move_remaining_files():
 def mark_completion():
     """Rename the folder to mark completion."""
     try:
+        # Clean up temporary download folder first
+        if os.path.exists(main_folder):
+            try:
+                shutil.rmtree(main_folder, ignore_errors=True)
+                print(f"✅ Removed temporary download folder: {main_folder}")
+            except Exception as e:
+                print(f"Error removing temporary download folder: {e}")
+
+        # Then rename the script folder to COMPLETED
         completed_folder = script_folder.replace("_IN_PROGRESS", "_COMPLETED")
         if os.path.exists(script_folder):
             os.rename(script_folder, completed_folder)

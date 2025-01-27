@@ -407,6 +407,16 @@ def upload_bids_from_cli(base_path: str = None) -> bool:
 
         # Process each completed folder
         for folder in completed_folders:
+            # Delete temporary download folder if it exists
+            script_name = os.path.basename(folder).split('_COMPLETED')[0]
+            temp_download_folder = os.path.join(folder, script_name)
+            if os.path.exists(temp_download_folder):
+                try:
+                    shutil.rmtree(temp_download_folder)
+                    print(f"✅ Removed leftover temporary download folder: {temp_download_folder}")
+                except Exception as e:
+                    print(f"⚠️ Error removing temporary folder {temp_download_folder}: {str(e)}")
+
             print(f"\n📁 Processing folder: {folder}")
             upload_success, upload_message = upload_data(folder)
             

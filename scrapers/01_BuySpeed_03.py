@@ -281,12 +281,12 @@ def extract_bid_links(driver, max_links=50):
                 retry_count += 1
                 log_message(f"⚠️ Navigation retry {retry_count}/{max_retries}")
                 if retry_count >= max_retries:
-                    log_message("❌ Max navigation retries reached")
+                    log_message("There are no other pages.")
                     break
                 time.sleep(2)
 
         except Exception as e:
-            log_message(f"❌ Error processing page {page_number}: {str(e)}")
+            log_message(f"Error processing page {page_number}: {str(e)}")
             retry_count += 1
             if retry_count >= max_retries:
                 break
@@ -925,9 +925,10 @@ def main():
 
     # Keep all URLs
     urls = [
-        "https://oregonbuys.gov/bso/view/search/external/advancedSearchBid.xhtml?openBids=true",
-        "https://arbuy.arkansas.gov/bso/view/search/external/advancedSearchBid.xhtml?openBids=true",
-        "https://nevadaepro.com/bso/view/search/external/advancedSearchBid.xhtml?openBids=true"
+        "https://knoxbuys.buyspeed.com/bso/view/search/external/advancedSearchBid.xhtml?openBids=true",
+        "https://oregon-uat.buyspeed.com/bso/view/search/external/advancedSearchBid.xhtml?openBids=true",
+        "https://www.njstart.gov/bso/view/search/external/advancedSearchBid.xhtml?openBids=true",
+        "https://epro.sbcounty.gov/bso/view/search/external/advancedSearchBid.xhtml",
     ]
 
     sl_no = 1  # Global counter for all bids across all sites

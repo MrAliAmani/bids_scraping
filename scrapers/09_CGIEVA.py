@@ -250,18 +250,39 @@ def extract_bid_details(driver, bid_element):
         return ""
 
     try:
-        # Primary click method
-        try:
-            driver.execute_script("arguments[0].scrollIntoView(true);", bid_element)
-            time.sleep(random.uniform(1, 3))
-            ActionChains(driver).move_to_element(bid_element).click().perform()
-        except (StaleElementReferenceException, ElementNotInteractableException):
-            # Fallback click method
+        # Wait for page to be fully loaded before attempting click
+        WebDriverWait(driver, 30).until(
+            lambda x: x.execute_script("return document.readyState") == "complete"
+        )
+        time.sleep(2)  # Additional wait after page load
+
+        # Retry click up to 3 times
+        max_retries = 3
+        for attempt in range(max_retries):
             try:
-                driver.execute_script("arguments[0].click();", bid_element)
-            except:
-                print("Failed to click bid element")
-                return bid_details
+                # Scroll element into view
+                driver.execute_script("arguments[0].scrollIntoView(true);", bid_element)
+                time.sleep(2)  # Wait after scroll
+
+                # Wait for element to be clickable
+                WebDriverWait(driver, 20).until(
+                    EC.element_to_be_clickable(bid_element)
+                )
+                
+                # Try clicking with ActionChains
+                ActionChains(driver).move_to_element(bid_element).click().perform()
+                break
+            except (StaleElementReferenceException, ElementNotInteractableException):
+                if attempt == max_retries - 1:  # Last attempt
+                    # Final fallback to JavaScript click
+                    try:
+                        driver.execute_script("arguments[0].click();", bid_element)
+                    except:
+                        print("Failed to click bid element after all attempts")
+                        return bid_details
+                else:
+                    time.sleep(2)  # Wait before retry
+                    continue
 
         # Keep existing wait logic
         WebDriverWait(driver, 30).until(
@@ -576,7 +597,9 @@ def move_remaining_files(folder, bid_number):
 
 
 def cleanup_script_folder():
-    """Remove the script-specific folder and any temporary files."""
+    """
+    Clean up the script-specific download folder by moving all files to their respective bid folders.
+    """
     if os.path.exists(script_folder):
         # Clean up any temporary download files
         if os.path.exists(temp_download_folder):
@@ -591,7 +614,8 @@ def cleanup_script_folder():
                     print(f"Error removing {item_path}: {e}")
 
             try:
-                os.rmdir(temp_download_folder)
+                shutil.rmtree(temp_download_folder, ignore_errors=True)
+                print(f"✅ Removed temporary download folder: {temp_download_folder}")
             except Exception as e:
                 print(f"Error removing temporary download folder: {e}")
 
@@ -870,8 +894,15 @@ def main():
         input("Press Enter to continue...")
 
     finally:
-        # Save cookies before quitting
-        pickle.dump(driver.get_cookies(), open("cookies.pkl", "wb"))
+        # Remove cookies file
+        cookie_file = "cookies.pkl"
+        if os.path.exists(cookie_file):
+            try:
+                os.remove(cookie_file)
+                print("🗑️ Removed cookies file")
+            except Exception as e:
+                print(f"Error removing cookies file: {e}")
+                
         driver.quit()
         update_attachments_in_excel()
         cleanup_script_folder()  # Clean up the script-specific folder

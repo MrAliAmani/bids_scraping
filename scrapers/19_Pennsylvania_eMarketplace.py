@@ -754,6 +754,15 @@ def complete_scraping():
 		in_progress_path = os.path.join(base_folder, f"{script_name}_IN_PROGRESS")
 		completed_path = os.path.join(base_folder, f"{script_name}_COMPLETED")
 		
+		# Clean up temporary download folder first
+		try:
+			download_folder = os.path.join(in_progress_path, script_name)
+			if os.path.exists(download_folder):
+				shutil.rmtree(download_folder, ignore_errors=True)
+				logger.info(f"[SUCCESS] Removed temporary download folder: {download_folder}")
+		except Exception as e:
+			logger.error(f"[ERROR] Failed to remove download folder: {str(e)}")
+		
 		if os.path.exists(in_progress_path):
 			try:
 				os.rename(in_progress_path, completed_path)

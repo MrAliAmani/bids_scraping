@@ -682,6 +682,14 @@ def main():
         # Move any remaining files
         move_remaining_files()
 
+        # Clean up temporary download folder before renaming
+        try:
+            if os.path.exists(progress_folder):
+                shutil.rmtree(progress_folder)
+                print(f"✅ Removed temporary download folder: {progress_folder}")
+        except Exception as e:
+            print(f"⚠️ Error removing temporary folder: {str(e)}")
+
         # Rename script folder to indicate completion
         completed_folder = script_folder.replace("_IN_PROGRESS", "_COMPLETED")
         if os.path.exists(script_folder):
@@ -689,9 +697,7 @@ def main():
             print(f"✅ Folder renamed to indicate completion: {completed_folder}")
 
         # Success message
-        print(
-            "✅ Script executed successfully. All relevant bids have been downloaded."
-        )
+        print("✅ Script executed successfully. All relevant bids have been downloaded.")
         play_notification_sound()
 
     except Exception as e:

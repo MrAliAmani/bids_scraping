@@ -124,13 +124,13 @@ logger = setup_logger()
 
 def print_start_message():
 	"""Display start message"""
-	print("🟢 Bids Extraction Started")
-	logger.info("[START] 🟢 Bids Extraction Started")
+	print("[START] Bids Extraction Started")
+	logger.info("[START] Bids Extraction Started")
 
 def notify_completion():
 	"""Notify successful completion"""
-	print("\n✅ All Bids and Attachments Extraction Successfully Completed")
-	logger.info("[COMPLETE] ✅ All Bids and Attachments Extraction Successfully Completed")
+	print("\n[COMPLETE] All Bids and Attachments Extraction Successfully Completed")
+	logger.info("[COMPLETE] All Bids and Attachments Extraction Successfully Completed")
 	play_notification_sound()
 
 def handle_error(error_msg, play_sound=True, pause=True):
@@ -242,6 +242,15 @@ def complete_scraping():
 		in_progress_path = os.path.join(base_folder, f"{script_name}_IN_PROGRESS")
 		completed_path = os.path.join(base_folder, f"{script_name}_COMPLETED")
 		
+		# Clean up temporary download folder first
+		try:
+			download_folder = os.path.join(in_progress_path, script_name)
+			if os.path.exists(download_folder):
+				shutil.rmtree(download_folder, ignore_errors=True)
+				logger.info(f"[SUCCESS] Removed temporary download folder: {download_folder}")
+		except Exception as e:
+			logger.error(f"[ERROR] Failed to remove download folder: {str(e)}")
+		
 		if os.path.exists(in_progress_path):
 			try:
 				os.rename(in_progress_path, completed_path)
@@ -325,7 +334,7 @@ def update_excel_file(script_folder, script_name, bids_data):
 				for cell in column:
 					cell.number_format = '@'
 		
-		print(f"\n✅ Updated Excel file with {len(bids_data)} bids: {excel_path}")
+		print(f"\nUpdated Excel file with {len(bids_data)} bids: {excel_path}")
 		logger.info(f"[SUCCESS] Updated Excel file with {len(bids_data)} bids: {excel_path}")
 		
 		# Verify the Excel file was saved
@@ -343,7 +352,7 @@ def update_excel_file(script_folder, script_name, bids_data):
 	except Exception as e:
 		error_msg = f"[ERROR] Error updating Excel: {str(e)}"
 		logger.error(error_msg)
-		print(f"\n❌ {error_msg}")
+		print(f"\n{error_msg}")
 		return False
 
 def wait_for_page_load(driver, timeout=30):
@@ -391,13 +400,13 @@ def apply_filters(driver):
 		search_button.click()
 		time.sleep(10)  # Wait longer for search results
 
-		print("✅ Filters applied successfully")
+		print("Filters applied successfully")
 		logger.info("[SUCCESS] Filters applied successfully")
 		return True
 	except Exception as e:
 		error_msg = f"[ERROR] Error applying filters: {str(e)}"
 		logger.error(error_msg)
-		print(f"\n❌ {error_msg}")
+		print(f"\n{error_msg}")
 		play_notification_sound()
 		return False
 
@@ -489,7 +498,7 @@ def extract_bid_info(driver, current_row):
 	except Exception as e:
 		error_msg = f"[ERROR] Error extracting bid info: {str(e)}"
 		logger.error(error_msg)
-		print(f"\n❌ {error_msg}")
+		print(f"\n{error_msg}")
 		return None
 
 def extract_bid_details(driver, bid_info):
@@ -585,18 +594,18 @@ def download_attachments(driver, bid_folder):
 						destination = os.path.join(bid_folder, file)
 						try:
 							safe_move(source, destination)
-							print(f"✅ Successfully moved {file} to bid folder")
+							print(f"Successfully moved {file} to bid folder")
 							successfully_moved_files.append(file)
 						except Exception as move_error:
 							logger.error(f"[ERROR] Failed to move {file}: {str(move_error)}")
 				
 				if wait_time >= max_wait:
-					print(f"⚠️ Timeout waiting for {filename} to download")
+					print(f"Timeout waiting for {filename} to download")
 					
 			except Exception as e:
 				error_msg = f"Error downloading attachment: {str(e)}"
 				logger.error(error_msg)
-				print(f"❌ {error_msg}")
+				print(f"{error_msg}")
 				continue
 
 		# Verify files in bid folder
@@ -609,9 +618,9 @@ def download_attachments(driver, bid_folder):
 					print(f"- {file}")
 				return actual_files
 			else:
-				print("⚠️ No files found in bid folder after download")
+				print("No files found in bid folder after download")
 		else:
-			print(f"⚠️ Bid folder not found: {bid_folder}")
+			print(f"Bid folder not found: {bid_folder}")
 		
 		return successfully_moved_files
 
@@ -704,9 +713,9 @@ def scrape_bids(driver, days_back=1):
 							
 							if should_process_bid(bid_url, bid_number, bid_info['Posted Date'], {}):
 								page_bids.append(bid_info)
-								print(f"✅ Added bid {bid_number} to processing queue")
+								print(f"Added bid {bid_number} to processing queue")
 							else:
-								print(f"⚠️ Skipping bid {bid_number} - already processed")
+								print(f"Skipping bid {bid_number} - already processed")
 								
 							if len(page_bids) >= urls_per_page:
 								print(f"\nReached {urls_per_page} unique bids on page {page_num}")
@@ -741,7 +750,7 @@ def scrape_bids(driver, days_back=1):
 			except Exception as e:
 				error_msg = f"[ERROR] Error processing page {page_num}: {str(e)}"
 				logger.error(error_msg)
-				print(f"\n❌ {error_msg}")
+				print(f"\n{error_msg}")
 				continue
 				
 		print(f"\n=== URL Collection Phase Complete ===")
@@ -801,7 +810,7 @@ def scrape_bids(driver, days_back=1):
 								print(f"Extracted description: {content}")
 				except Exception as e:
 					logger.warning(f"[WARNING] Error extracting summary: {str(e)}")
-					print("⚠️ Summary information not found")
+					print("Summary information not found")
 				
 				# Download attachments
 				print("\nDownloading attachments...")
@@ -823,9 +832,9 @@ def scrape_bids(driver, days_back=1):
 								destination = os.path.join(bid_folder, file)
 								try:
 									safe_move(source, destination)
-									print(f"✅ Moved {file} to bid folder")
+									print(f"Moved {file} to bid folder")
 								except Exception as e:
-									print(f"❌ Failed to move {file}: {str(e)}")
+									print(f"Failed to move {file}: {str(e)}")
 					
 					# Check bid folder
 					if os.path.exists(bid_folder):
@@ -835,7 +844,7 @@ def scrape_bids(driver, days_back=1):
 							actual_files.sort()  # Sort for consistent order
 							attachments_str = ', '.join(actual_files).rstrip(',')  # Remove any trailing comma
 							bid_info['Attachments'] = attachments_str
-							print(f"\n✅ Found {len(actual_files)} files in bid folder after attempt {attempt}:")
+							print(f"\nFound {len(actual_files)} files in bid folder after attempt {attempt}:")
 							for file in actual_files:
 								print(f"- {file}")
 						else:
@@ -852,7 +861,7 @@ def scrape_bids(driver, days_back=1):
 				
 				# Update Excel after each bid
 				if update_excel_file(script_folder, script_name, bids_data):
-					print(f"✅ Bid {bid_info['Solicitation Number']} successfully extracted and saved to Excel.")
+					print(f"Bid {bid_info['Solicitation Number']} successfully extracted and saved to Excel.")
 					if bid_info['Attachments']:
 						print(f"   Attachments saved: {bid_info['Attachments']}")
 				else:
@@ -861,14 +870,14 @@ def scrape_bids(driver, days_back=1):
 			except Exception as e:
 				error_msg = f"[ERROR] Error processing bid {bid_info['Solicitation Number']}: {str(e)}"
 				logger.error(error_msg)
-				print(f"\n❌ {error_msg}")
+				print(f"\n{error_msg}")
 				play_notification_sound()
 				continue
 				
 		if bids_data:
 			# Final Excel update to ensure all attachments are saved
 			if update_excel_file(script_folder, script_name, bids_data):
-				print(f"\n✅ Final Excel update completed with {len(bids_data)} bids.")
+				print(f"\nFinal Excel update completed with {len(bids_data)} bids.")
 			print(f"\n{len(bids_data)} bid links, posted {days_back} day(s) ago, have been successfully extracted and saved.")
 			return True
 			
@@ -878,7 +887,7 @@ def scrape_bids(driver, days_back=1):
 	except Exception as e:
 		error_msg = f"[ERROR] Error in scrape_bids: {str(e)}"
 		logger.error(error_msg)
-		print(f"\n❌ {error_msg}")
+		print(f"\n{error_msg}")
 		play_notification_sound()
 		return False
 
