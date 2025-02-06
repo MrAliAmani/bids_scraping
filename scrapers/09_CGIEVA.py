@@ -180,7 +180,10 @@ def perform_advanced_search(driver):
 def extract_bid_links(driver, max_links=30):
     """Extract bid links from the search results page."""
     bid_links = []
-    while len(bid_links) < max_links:
+    retry_count = 0
+    max_retries = 3
+
+    while len(bid_links) < max_links and retry_count < max_retries:
         try:
             # Wait for bid elements to be present on the page
             WebDriverWait(driver, 20).until(
@@ -188,18 +191,38 @@ def extract_bid_links(driver, max_links=30):
                     (By.XPATH, "//div[contains(@class, 'card-body')]")
                 )
             )
+
+            # Add a small delay to ensure elements are fully loaded
+            time.sleep(3)
+
+            # Try to find all bid elements
             bid_elements = driver.find_elements(
                 By.XPATH, "//div[contains(@class, 'card-body')]"
             )
+
+            if not bid_elements:
+                print("No bid elements found, retrying...")
+                retry_count += 1
+                driver.refresh()
+                time.sleep(5)
+                continue
+
             for element in bid_elements:
-                if len(bid_links) < max_links:
-                    view_opportunity = element.find_element(
-                        By.XPATH,
-                        ".//span[contains(@class, 'btn-outline-primary') and contains(text(), 'View Opportunity')]",
+                try:
+                    # Wait for the specific View Opportunity button within this card
+                    view_opportunity = WebDriverWait(element, 10).until(
+                        EC.presence_of_element_located(
+                            (By.XPATH,
+                            ".//span[contains(@class, 'btn-outline-primary') and contains(text(), 'View Opportunity')]")
+                        )
                     )
-                    bid_links.append(view_opportunity)
-                else:
-                    break
+                    
+                    if len(bid_links) < max_links:
+                        bid_links.append(view_opportunity)
+                    else:
+                        break
+                except (NoSuchElementException, TimeoutException):
+                    continue
 
             if len(bid_links) < max_links:
                 # Scroll to load more results
@@ -207,9 +230,17 @@ def extract_bid_links(driver, max_links=30):
                 time.sleep(random.uniform(4, 6))
             else:
                 break
+
         except Exception as e:
             print(f"Error extracting bid links: {str(e)}")
-            break
+            retry_count += 1
+            if retry_count >= max_retries:
+                print("Max retries reached, proceeding with available links")
+                break
+            driver.refresh()
+            time.sleep(5)
+
+    print(f"Successfully extracted {len(bid_links)} bid links")
     return bid_links
 
 

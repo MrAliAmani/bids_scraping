@@ -181,3 +181,119 @@ We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 Happy scraping! 🎉
+
+## 🧮 Data Processing Methods
+
+The project uses advanced AI and ML techniques for accurate data matching and classification:
+
+### 🎯 Matching Methods
+
+1. **Agency Matching**
+   - Batched similarity calculations
+   - URL analysis
+   - Enhanced confidence scoring
+   - Pattern recognition
+
+2. **Notice Type Matching**
+   - Pattern-based recognition
+   - Fallback to common types
+   - Better variation handling
+   - Context-aware classification
+
+3. **Category Matching**
+   - Domain-specific pattern recognition
+   - Weighted semantic similarity
+   - Code and keyword matching
+   - Confidence thresholds
+   - Ensemble method for improved accuracy
+
+### 🔄 Processing Enhancements
+
+1. **Advanced Preprocessing**
+   - Stop word removal
+   - Stemming and lemmatization
+   - Special character handling
+   - Advanced text cleaning
+   - Punctuation normalization
+
+2. **Embedding Models**
+   - BERT base model
+   - RoBERTa base model
+   - Sentence Transformers
+   - Domain-specific fine-tuning
+
+3. **Contextual Matching**
+   - Full document context analysis
+   - Transformer-based models
+   - Section-aware processing
+   - Hierarchical matching
+
+### ⚡ Performance Optimizations
+
+- Parallel chunk processing
+- Vectorized DataFrame operations
+- Efficient API response caching
+- Embedding result caching
+- Reduced memory usage
+- Minimized I/O operations
+
+## 🛠️ Using excel_processor.py
+
+The script supports various execution modes and configurations:
+
+### Basic Usage
+
+```bash
+# Process all COMPLETED folders (default)
+python utils/excel_processor.py
+
+# Process specific folder
+python utils/excel_processor.py [optional_base_path]
+```
+
+### API Options
+
+```bash
+# Use test API
+python utils/excel_processor.py --test-api
+
+# Test API with specific folder
+python utils/excel_processor.py --test-api [optional_base_path]
+```
+
+### Matching Methods
+
+```bash
+# Use ensemble method
+python excel_processor.py --method ensemble
+
+# Use hybrid method
+python excel_processor.py --method hybrid
+
+# Use contextual method
+python excel_processor.py --method contextual
+```
+
+### Embedding Models
+
+```bash
+# Use RoBERTa
+python excel_processor.py --embedding-model roberta-base
+
+# Use BERT
+python excel_processor.py --embedding-model bert-base-uncased
+```
+
+### Combined Options
+
+```bash
+# Multiple options
+python excel_processor.py --method ensemble --test-api --base-path /path/to/files
+```
+
+### Available Arguments
+
+- `--method`: Choose matching method (similarity, ensemble, hybrid, contextual)
+- `--test-api`: Use test API endpoints
+- `--base-path`: Specify folder path to process
+- `--embedding-model`: Choose embedding model (paraphrase-MiniLM-L6-v2, roberta-base, bert-base-uncased)

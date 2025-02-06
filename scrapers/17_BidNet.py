@@ -649,11 +649,7 @@ class BidNetScraper:
                             )
                             username = WebDriverWait(
                                 self.driver, 10
-                            ).until(  # Increased timeout
-                                EC.presence_of_element_located(
-                                    (selector_type, selector_value)
-                                )
-                            )
+                            ).until(EC.presence_of_element_located((selector_type, selector_value)))
                             if (
                                 username
                                 and username.is_displayed()
@@ -707,11 +703,7 @@ class BidNetScraper:
                         try:
                             password = WebDriverWait(
                                 self.driver, 10
-                            ).until(  # Increased timeout
-                                EC.presence_of_element_located(
-                                    (selector_type, selector_value)
-                                )
-                            )
+                            ).until(EC.presence_of_element_located((selector_type, selector_value)))
                             if (
                                 password
                                 and password.is_displayed()
@@ -751,11 +743,7 @@ class BidNetScraper:
                         try:
                             login_button = WebDriverWait(
                                 self.driver, 10
-                            ).until(  # Increased timeout
-                                EC.element_to_be_clickable(
-                                    (selector_type, selector_value)
-                                )
-                            )
+                            ).until(EC.element_to_be_clickable((selector_type, selector_value)))
                             if (
                                 login_button
                                 and login_button.is_displayed()
@@ -902,13 +890,23 @@ class BidNetScraper:
         try:
             cache = self.load_cache()
             
-            # Convert date from MM/DD/YYYY to YYYY-MM-DD
+            # Add debug logging
+            self.logger.info(f"Pre-conversion posted date: {bid_data['posted_date']}")
+            
             try:
                 if bid_data["posted_date"]:
-                    posted_date = datetime.strptime(bid_data["posted_date"], "%m/%d/%Y")
-                    formatted_date = posted_date.strftime("%Y-%m-%d")
+                    # Check if date is already in YYYY-MM-DD format
+                    if re.match(r'^\d{4}-\d{2}-\d{2}$', bid_data["posted_date"]):
+                        formatted_date = bid_data["posted_date"]
+                        self.logger.info(f"Date already in correct format: {formatted_date}")
+                    else:
+                        # Convert from MM/DD/YYYY to YYYY-MM-DD
+                        posted_date = datetime.strptime(bid_data["posted_date"], "%m/%d/%Y")
+                        formatted_date = posted_date.strftime("%Y-%m-%d")
+                        self.logger.info(f"Converted date format: {formatted_date}")
                 else:
                     formatted_date = datetime.now().strftime("%Y-%m-%d")
+                    self.logger.info(f"Using current date: {formatted_date}")
                     
                 cache[bid_data["bid_detail_page_url"]] = {
                     "posted_date": formatted_date,
@@ -919,8 +917,19 @@ class BidNetScraper:
                 with open(self.cache_file, "w") as f:
                     json.dump(cache, f, indent=2)
                 self.logger.info(f"✅ Successfully cached bid: {bid_data['solicitation_number']}")
+                
             except ValueError as e:
                 self.logger.error(f"Error formatting date for cache: {str(e)}")
+                self.logger.error(f"Problematic date value: {bid_data['posted_date']}")
+                # Use original date if conversion fails
+                cache[bid_data["bid_detail_page_url"]] = {
+                    "posted_date": bid_data["posted_date"],
+                    "last_checked": datetime.now().strftime("%Y-%m-%d"),
+                    "solicitation_number": bid_data["solicitation_number"]
+                }
+                with open(self.cache_file, "w") as f:
+                    json.dump(cache, f, indent=2)
+                self.logger.info(f"✅ Cached bid with original date format: {bid_data['solicitation_number']}")
                 
         except Exception as e:
             self.logger.error(f"Error saving to cache: {str(e)}")
@@ -947,6 +956,40 @@ class BidNetScraper:
             self.logger.error(f"Error checking cache: {str(e)}")
             return False
 
+    def check_incomplete_form(self) -> bool:
+        """Check if there's an incomplete purchasing group form"""
+        try:
+            # Check using multiple selectors
+            check_script = """
+                function checkIncompleteForm() {
+                    // Check by ID
+                    const titleElement = document.querySelector('#ui-id-1');
+                    if (titleElement && titleElement.textContent.includes('Incomplete Purchasing Group Form')) {
+                        return true;
+                    }
+                    
+                    // Check by XPath as backup
+                    const xpath = '/html/body/div[11]/div[1]/span';
+                    const result = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                    const xpathElement = result.singleNodeValue;
+                    if (xpathElement && xpathElement.textContent.includes('Incomplete Purchasing Group Form')) {
+                        return true;
+                    }
+                    
+                    return false;
+                }
+                return checkIncompleteForm();
+            """
+            is_incomplete = self.driver.execute_script(check_script)
+            if is_incomplete:
+                self.logger.warning("⚠️ Incomplete Purchasing Group Form detected - skipping")
+                return True
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"Error checking incomplete form: {str(e)}")
+            return False
+
     def process_bid_links(self, links: List[Dict[str, str]]) -> None:
         """Process list of bid links and save to Excel after each bid"""
         self.logger.info(f"Processing {len(links)} bid links")
@@ -954,6 +997,14 @@ class BidNetScraper:
         for link in links:
             try:
                 self.logger.info(f"\nProcessing bid: {link['title']}")
+
+                # Navigate to bid page
+                self.driver.get(link["url"])
+                self.random_delay(2, 3)
+
+                # Check for incomplete form before proceeding
+                if self.check_incomplete_form():
+                    continue
 
                 # Extract bid details with dates from link
                 bid_data = self.extract_bid_details(
@@ -967,6 +1018,11 @@ class BidNetScraper:
                 # Check if bid is already processed
                 if self.is_bid_in_cache(link["url"], bid_data.solicitation_number):
                     continue
+
+                # Create folders only after we know we'll process this bid
+                clean_solicitation = re.sub(r'[<>:"/\\|?*]', '_', bid_data.solicitation_number)
+                bid_folder = self.script_folder_in_progress / clean_solicitation
+                bid_folder.mkdir(parents=True, exist_ok=True)
 
                 # Download attachments
                 attachments = self.download_bid_attachments(bid_data.solicitation_number)
@@ -1669,8 +1725,6 @@ class BidNetScraper:
                 return ""
                 
             clean_solicitation = re.sub(r'[<>:"/\\|?*]', '_', solicitation_number)
-            bid_folder = self.script_folder_in_progress / clean_solicitation
-            bid_folder.mkdir(parents=True, exist_ok=True)
 
             # Click Documents tab with timeout and error handling
             try:
@@ -1683,86 +1737,125 @@ class BidNetScraper:
                 self.logger.info(f"No documents tab available: {str(e)}")
                 return ""
 
-            # Get attachment links
-            attachment_links = self.driver.execute_script("""
-                const links = [];
-                document.querySelectorAll('a[id^="attachmentDownloadLnk_"]').forEach(link => {
-                    links.push({
-                        filename: link.textContent.trim(),
-                        url: link.href
-                    });
-                });
-                return links;
-            """)
+            # Click all attachment links first - Fixed await issue
+            click_script = """
+                function clickAllAttachments() {
+                    const links = [];
+                    let rowIndex = 1;
+                    
+                    function sleep(ms) {
+                        return new Promise(resolve => {
+                            const start = Date.now();
+                            while (Date.now() - start < ms) {}
+                            resolve();
+                        });
+                    }
+                    
+                    while (true) {
+                        try {
+                            const xpath = `/html/body/main/div[1]/div[2]/div[3]/div[2]/div/div/table/tbody/tr[${rowIndex}]/td[1]/a`;
+                            const result = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                            const element = result.singleNodeValue;
+                            
+                            if (element) {
+                                try {
+                                    element.click();
+                                    console.log(`Clicked attachment in row ${rowIndex}`);
+                                    // Use synchronous delay instead of await
+                                    sleep(500);
+                                } catch (clickError) {
+                                    console.log(`Click failed for row ${rowIndex}: ${clickError}`);
+                                }
+                                rowIndex++;
+                            } else {
+                                break;
+                            }
+                        } catch (e) {
+                            console.log(`Error processing row ${rowIndex}: ${e}`);
+                            break;
+                        }
+                    }
+                    return rowIndex - 1;  // Return number of attachments clicked
+                }
+                return clickAllAttachments();
+            """
+            
+            num_attachments = self.driver.execute_script(click_script)
+            self.logger.info(f"Clicked {num_attachments} attachment links")
+            self.random_delay(2, 3)  # Wait for downloads to start
 
-            if not attachment_links:
-                self.logger.info("No attachments found")
-                return ""
-
-            self.logger.info(f"Found {len(attachment_links)} attachments")
+            # Wait for downloads and move files
             downloaded_files = []
+            start_time = time.time()
+            timeout = 300  # 5 minutes total timeout
 
-            for link in attachment_links:
-                filename = link["filename"]
-                download_path = bid_folder / filename
-                temp_download_path = self.script_folder / filename
-
-                # Skip if file already exists
-                if download_path.exists():
-                    downloaded_files.append(filename)
-                    continue
-
-                try:
-                    self.driver.get(link["url"])
-                    self.logger.info(f"⏳ Downloading: {filename}")
-
-                    # Added: Download timeout
-                    download_timeout = 300  # 5 minutes
-                    start_time = time.time()
-
-                    # Wait for download to start and complete
-                    while True:
-                        if temp_download_path.exists():
+            while time.time() - start_time < timeout:
+                # Get all files in temporary download folder
+                temp_files = list(self.script_folder.glob('*'))
+                
+                for temp_file in temp_files:
+                    if temp_file.is_file():
+                        try:
                             # Wait for file size to stabilize
                             last_size = -1
-                            current_size = temp_download_path.stat().st_size
+                            current_size = temp_file.stat().st_size
                             
-                            size_check_timeout = time.time() + 30  # 30 seconds timeout for size check
+                            size_stable = False
+                            size_check_start = time.time()
                             
-                            while last_size != current_size and time.time() < size_check_timeout:
+                            while time.time() - size_check_start < 30:  # 30 seconds timeout for size check
+                                if last_size == current_size:
+                                    size_stable = True
+                                    break
                                 time.sleep(2)
                                 last_size = current_size
-                                if temp_download_path.exists():  # Check if file still exists
-                                    current_size = temp_download_path.stat().st_size
+                                if temp_file.exists():
+                                    current_size = temp_file.stat().st_size
                                 else:
                                     break
-                            
-                            # Move to bid folder if file exists and size is stable
-                            if temp_download_path.exists():
-                                safe_move(str(temp_download_path), str(download_path))
-                                downloaded_files.append(filename)
-                                self.logger.info(f"✅ Download complete")
-                            break
-                        
-                        # Check for timeout
-                        if time.time() - start_time > download_timeout:
-                            self.logger.error(f"Download timeout for {filename}")
-                            break
-                        
-                        time.sleep(1)
 
-                except Exception as e:
-                    self.logger.info(f"Could not download {filename}: {str(e)}")
-                    # Added: Clean up any partial downloads
-                    if temp_download_path.exists():
-                        try:
-                            temp_download_path.unlink()
-                        except:
-                            pass
-                    continue
+                            if size_stable and temp_file.exists():
+                                # Create bid folder only when we have a stable file to move
+                                bid_folder = self.script_folder_in_progress / clean_solicitation
+                                bid_folder.mkdir(parents=True, exist_ok=True)
+                                
+                                # Use the actual filename from the downloaded file
+                                actual_filename = temp_file.name
+                                target_path = bid_folder / actual_filename
+                                
+                                if not target_path.exists():  # Only move if target doesn't exist
+                                    safe_move(str(temp_file), str(target_path))
+                                    downloaded_files.append(actual_filename)
+                                    self.logger.info(f"✅ Moved file: {actual_filename}")
+                                
+                        except Exception as e:
+                            self.logger.error(f"Error processing file {temp_file}: {str(e)}")
+                            if temp_file.exists():
+                                try:
+                                    temp_file.unlink()
+                                except:
+                                    pass
+
+                # Break if we've found all expected attachments
+                if len(downloaded_files) >= num_attachments:
+                    break
+                
+                time.sleep(1)
+
+            # Clean up any remaining files in temp folder
+            for temp_file in self.script_folder.glob('*'):
+                try:
+                    if temp_file.is_file():
+                        temp_file.unlink()
+                except:
+                    pass
 
             if downloaded_files:
+                # Update Excel with actual filenames
+                self.update_excel_attachments(solicitation_number, ", ".join(downloaded_files))
                 self.logger.info(f"Successfully downloaded attachments: {', '.join(downloaded_files)}")
+            else:
+                self.logger.warning("No attachments were successfully downloaded")
             
             return ", ".join(downloaded_files)
 
@@ -1770,7 +1863,25 @@ class BidNetScraper:
             self.logger.error(f"Error in attachment download process: {str(e)}")
             return ""
 
+    def update_excel_attachments(self, solicitation_number: str, attachments: str):
+        """Update the Attachments column in Excel for the given solicitation number"""
+        try:
+            excel_path = self.script_folder_in_progress / f"{self.script_name}.xlsx"
+            if not excel_path.exists():
+                self.logger.error("Excel file not found")
+                return
 
+            df = pd.read_excel(excel_path)
+            mask = df['Solicitation Number'] == solicitation_number
+            if mask.any():
+                df.loc[mask, 'Attachments'] = attachments
+                df.to_excel(excel_path, index=False)
+                self.logger.info(f"Updated Excel attachments for {solicitation_number}")
+            else:
+                self.logger.error(f"Solicitation number {solicitation_number} not found in Excel")
+
+        except Exception as e:
+            self.logger.error(f"Error updating Excel attachments: {str(e)}")
 
     def format_date(self, date_str: str) -> str:
         """Format date string to YYYY-MM-DD format"""

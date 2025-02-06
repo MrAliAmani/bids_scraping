@@ -6,6 +6,7 @@ import urllib3
 import warnings
 import time
 import argparse
+from typing import List, Dict
 
 # Suppress SSL verification warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -19,6 +20,43 @@ API_ENDPOINTS = {
     "state": "https://bidsportal.com/api/getState",
 }
 
+def print_column_values(data: List[Dict], column: str):
+    """Print values for a specific column from the API response"""
+    if not data:
+        print(f"No data found for {column}")
+        return
+
+    print(f"\n=== {column.upper()} Values ===\n")
+    
+    # Map column names to their corresponding data keys
+    column_mappings = {
+        'agency': 'agency_name',
+        'notice': 'notice_type',
+        'category': 'category_name',
+        'state': 'state_name',
+        'agency_id': 'agency_id',
+        'notice_id': 'notice_id',
+        'category_id': 'category_id',
+        'state_id': 'state_id'
+    }
+
+    key = column_mappings.get(column.lower())
+    if not key:
+        print(f"Unknown column: {column}")
+        return
+
+    # Print values with their IDs
+    for item in data:
+        if isinstance(item, dict):
+            name = item.get(key, '')
+            id_field = key.replace('name', 'id') if 'name' in key else key
+            id_value = item.get(id_field, '')
+            
+            if name:
+                if '_id' in column:
+                    print(f"{id_value}")
+                else:
+                    print(f"{name} (ID: {id_value})")
 
 def make_request(url: str, params: dict = None) -> requests.Response:
     """Make HTTP request with proper error handling and SSL verification disabled"""
@@ -47,9 +85,40 @@ def make_request(url: str, params: dict = None) -> requests.Response:
         print(f"Request Error: {str(e)}")
         raise
 
+def get_api_data(endpoint_name: str) -> List[Dict]:
+    """Get data from specified API endpoint"""
+    url = API_ENDPOINTS.get(endpoint_name)
+    if not url:
+        print(f"Invalid endpoint: {endpoint_name}")
+        return []
 
-def test_api_endpoints(endpoint_filter: str = None):
-    """Test each API endpoint and print the response data"""
+    try:
+        params = {"country_id": 10} if endpoint_name == "state" else {}
+        response = make_request(url, params)
+        
+        if response.status_code == 200:
+            data = response.json()
+            if isinstance(data, dict) and "data" in data:
+                # Print sample data for debugging
+                if data["data"]:
+                    print("\nSample API Response Structure:")
+                    pprint(data["data"][0])
+                return data["data"]
+            
+        print(f"Error getting data from {endpoint_name} API: {response.status_code}")
+        return []
+
+    except Exception as e:
+        print(f"Error accessing {endpoint_name} API: {str(e)}")
+        return []
+
+def test_api_endpoints(endpoint_filter: str = None, show_column: str = None):
+    """Test each API endpoint and optionally show specific column values"""
+    if endpoint_filter and show_column:
+        # Get and display only the requested column for the specified endpoint
+        data = get_api_data(endpoint_filter)
+        print_column_values(data, show_column)
+        return
 
     print("\n=== Testing API Endpoints ===\n")
 
@@ -172,14 +241,27 @@ if __name__ == "__main__":
         choices=["notice", "category", "agency", "state"],
         help="Specify a single endpoint to test (notice, category, agency, or state)",
     )
+    parser.add_argument(
+        "--show-column",
+        type=str,
+        choices=["agency", "notice", "category", "state", 
+                "agency_id", "notice_id", "category_id", "state_id"],
+        help="Show only values for the specified column"
+    )
+    parser.add_argument(
+        "--response-times",
+        action="store_true",
+        help="Test API response times"
+    )
 
     args = parser.parse_args()
 
     print("\n🚀 Starting API Tests...")
 
     try:
-        test_api_endpoints(args.endpoint)
-        test_api_response_times(args.endpoint)
+        test_api_endpoints(args.endpoint, args.show_column)
+        if args.response_times:
+            test_api_response_times(args.endpoint)
         print("\n✅ All API tests completed!")
 
     except Exception as e:
